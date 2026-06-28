@@ -1091,3 +1091,227 @@ Agent: main-orchestrator (Z.ai Code)
 3. نام جدول‌های تکسا در UI اصلی دیده نمی‌شود
 4. بدون نمودار mock یا forecast نمایشی
 5. UI ساده، RTL، فارسی، اداری
+
+
+---
+
+## Phase 0 — Audit, Real Texsa File Analysis & Research (Civilic Completion)
+Agent: Kiro (Claude Opus 4.8)
+هدف: ممیزی کامل وضعیت فعلی، تحلیل امن فایل واقعی تکسا، تحقیق گردش‌کار عمرانی، و تثبیت پایه‌ی فازهای بعدی — مطابق Master Prompt.
+
+### کارهای انجام‌شده
+
+**۱. تحلیل امن فایل واقعی `Important project.svzt` (~۷۱MB)**
+- اسکریپت streaming با `iterparse` + `elem.clear()` نوشته شد: `.zscripts/analyze_svzt.py` (مصرف حافظه پایین، بدون روش memory-heavy).
+- خروجی‌ها:
+  - `src/lib/texsa/generated-schema.json` — ۴۵ جدول، ۷۸٬۹۸۸ ردیف، لیست کامل ستون‌ها با شمارش non-empty.
+  - `src/lib/texsa/table-map.ts` — دسته‌بندی دامنه‌ای جدول‌ها، نگاشت نام XML→مدل Prisma، نگاشت ستون‌های کلیدی به فیلدهای معنایی محصول، `PERSONALITY_TYPE_MAP`، `TEXSA_FILE_FACTS`.
+  - `docs/texsa-real-file-analysis.md` — تحلیل خوانا با مشخصات پروژه واقعی و جدول کامل ۴۵ جدول.
+- مشخصات پروژه واقعی استخراج‌شده از `brv_contract`:
+  - پروژه: «اجرای سازه ساختمان پارکینگ شرقی پروژه مجموعه آموزشی و فناوری خاتم»
+  - کارفرما: دانشگاه خاتم | مشاور/ناظر: مهندسین مشاور شارستان | پیمانکار: شرکت سیوان تدبیر تجارت
+  - شماره پیمان: C-KH-03-052 | مبلغ اولیه: ۳٬۳۰۹٬۴۴۳٬۹۸۹٬۱۶۶ ﷼ | سال فهرست‌بها: ۱۴۰۳ | نسخه تکسا: 14.0.5
+- جدول‌های کلیدی شناسایی و نگاشت شدند: `brv_rzmt`(ریزمتره ۸۵۵۱)، `brv_khmt`(خلاصه‌متره ۷۷۲۶)، `brv_bgml`/`brv_mult`/`brv_fhpy`(برگه مالی/فصول)، `brv_fhbh`(فهرست‌بها ۵۱۱۶)، `brv_type_situ`/`brv_situ`/`BaseSituNoe`(صورت‌وضعیت: موقت/ماقبل قطعی/قطعی)، `brv_ahta`/`brv_intp`(تعدیل/شاخص)، `brv_kosorat`/`brv_Tadilkosorat`(کسورات)، `brv_mogs`(گروه صورت‌جلسه)، `base_PersonalityTyp`/`brv_type`(طرفین).
+
+**۲. تحقیق گردش‌کار عمرانی → تصمیم محصول**
+- `docs/research-civil-workflow.md` نوشته شد: ساختار سه‌عاملی، نقش‌های هر سازمان، ماده ۳۷ ش.ع.پ و چرخه‌ی صورت‌وضعیت موقت، تعدیل با شاخص فصلی، متره/صورت‌جلسه، برگه مالی/فصول/حمل/مصالح، و قاعده‌ی «تکسا پشت‌صحنه».
+- هر بخش به تصمیم محصول مشخص ترجمه شد، از جمله ماشین حالت کامل ۱۳ مرحله‌ای صورت‌وضعیت.
+- نکته: جست‌وجوی وب فقط نتایج SEO/اسپم برگرداند؛ به‌جای آن از دانش پایدار مقررات (شرایط عمومی پیمان نشریه ۴۳۱۱) و شواهد عینی فایل واقعی استفاده شد. مطالب برای رعایت کپی‌رایت بازنویسی شدند.
+
+### ممیزی وضعیت فعلی — فهرست مشکلاتی که باید اصلاح شوند
+
+1. **Build ناایمن:** `next.config.ts` دارای `typescript.ignoreBuildErrors: true` است — باید حذف شود و خطاهای TS واقعی رفع شوند.
+2. **دیتابیس:** `provider = "sqlite"` — برای production باید PostgreSQL باشد (Prisma Postgres/Supabase/Neon). نیاز به migration واقعی و env.
+3. **Auth واقعی نیست:** `next-auth` نصب است ولی wire نشده؛ `currentUser` در `store.ts` hardcode شده. نیاز به session/role/organization/project context + permission middleware.
+4. **Permission Matrix وجود ندارد:** هیچ `src/lib/auth/permissions.ts` و `requireProjectPermission()` نیست. مجوزها فقط client-side/ضمنی هستند.
+5. **ماشین حالت صورت‌وضعیت ناقص:** schema فعلی `DRAFT→SUBMITTED→CONSULTANT_APPROVED→FINALIZED` دارد؛ باید به ۱۳ حالت کامل (با UNDER_REVIEW/RETURNED/RESUBMITTED برای هر دو طرف + PAYMENT_REGISTERED + LOCKED) ارتقا یابد و در `WorkflowInstance/WorkflowAction` ثبت شود.
+6. **چت پروژه‌محور پیاده نشده:** مدل‌های `ProjectChannel/ChannelMember/Message/MessageReadReceipt` در schema هستند اما کانال‌های پیش‌فرض، کانال خودکار صورت‌وضعیت، mention، read receipt و پیام سیستمی workflow پیاده نشده‌اند. کامپوننت `chat/chat-panel.tsx` هنوز مدل private thread قدیمی را استفاده می‌کند.
+7. **مکاتبات/اسناد:** مدل‌های `Letter` و `Document/DocumentVersion` هستند اما جریان کامل (draft/sent/received/answered + اتصال به صورت‌وضعیت/تعدیل) و نسخه‌گذاری واقعی پیاده نشده.
+8. **شلوغی UI:** هنوز ویوهای تزئینی زیاد در `components/views` هست (bi-dashboard, activity-heatmap, org-kpi, supplier-management, calendar, project-map, project-comparison, notification-preferences, document-archive) و مدل‌های Prisma متناظر (Risk, Supplier, ChangeOrder, CalendarEvent, Contract, BidRange, …). باید حذف یا به «تنظیمات پیشرفته» منتقل شوند.
+9. **داده خام تکسا در مسیر اصلی:** باید فقط در `تنظیمات پروژه > پیشرفته > داده خام تکسا` باشد.
+10. **Import تکسا فقط mirror است:** commit باید علاوه بر mirror، normalize به ViewModel محصول (Project/ProjectParty/PriceList/Metering/Financial/Payment/Adjustment/Deductions) انجام دهد. parser باید برای فایل ۷۱MB امن باشد (در حال حاضر فقط با template خالی تست شده بود).
+11. **Seed غیرواقعی:** seed فعلی مترو/پل/تونل و نقش‌های ADMIN/ESTIMATOR/BILLER دارد. باید به پروژه‌ی خاتم + سه طرف واقعی + کاربران نقش‌دار + داده‌ی workflow نمونه تبدیل شود.
+12. **package.json scripts:** فاقد `typecheck`, `db:migrate/deploy`, `db:seed` استاندارد؛ build فعلی custom standalone-copy است که برای Vercel مناسب نیست.
+
+### نقشه‌ی فازهای بعدی (پیشنهادی)
+- **Phase 1 — Product Architecture Reset:** پاکسازی schema (حذف مدل‌های تزئینی)، ماشین حالت کامل، `permissions.ts`، نقش‌ها/سازمان/طرف/عضو، seed واقعی خاتم.
+- **Phase 2 — UX Reset:** کارتابل من، sidebar ساده، project workspace ۸-تبی، حذف/مخفی‌کردن ویوهای شلوغ.
+- **Phase 3 — Workflows:** صورت‌وضعیت، تعدیل، مکاتبات، اسناد، کامنت، audit log.
+- **Phase 4 — Group Chat:** کانال‌های پروژه + کانال خودکار صورت‌وضعیت + read receipt/mention/پیام سیستمی.
+- **Phase 5 — Texsa Completion:** parser امن، normalize، export، validation، raw فقط پیشرفته.
+- **Phase 6 — Vercel Production:** PostgreSQL، env، build/scripts، migrations، typecheck/lint/build، deployment notes.
+
+### وضعیت
+Phase 0 کامل شد. هیچ تغییری در کد اجرایی اپ یا schema اعمال نشد (فقط افزودن docs، اسکریپت تحلیل، و فایل‌های تحلیل تکسا). آماده‌ی شروع Phase 1 پس از تأیید کاربر.
+
+
+---
+
+## Phase 1–6 — Civilic Product Completion (Foundation + Workflow Engine + Texsa Round-trip)
+Agent: Kiro (Claude Opus 4.8). همه‌ی تغییرات با `tsc --noEmit`، `eslint`، `prisma validate/generate` و `next build` راستی‌آزمایی شدند.
+
+### چه چیزی تغییر کرد و چرا
+
+**ممیزی + Spec (Phase 0/1)**
+- `docs/audit-current-state.md` — ممیزی کامل وضعیت (stack/schema/role/UI/texsa/Vercel و فهرست حذف/مخفی/refactor/حفظ).
+- `.kiro/steering/{civilic-product,civilic-ux,civilic-tech}.md` و `.kiro/specs/civilic-completion/{requirements,design,tasks}.md` — جهت محصول قبل از تغییرات بزرگ.
+- یافته‌ی کلیدی: کد اپ از قبل type-clean بود (تنها ۲ خطا در `examples/websocket` به‌خاطر نبود socket.io) — پس حذف `ignoreBuildErrors` امکان‌پذیر شد.
+
+**دیتابیس و معماری (Phase 1)** — `prisma/schema.prisma`
+- `provider` از `sqlite` به **`postgresql`** تغییر کرد (production-ready). dev می‌تواند با تغییر provider از sqlite استفاده کند.
+- مدل‌های سازگاری تکسا اضافه شد: `TexsaTableSchema`, `TexsaColumnSchema`, `TexsaRawRow`, `TexsaMappingRule`, `TexsaMappingIssue`, `TexsaExportJob`, `TexsaRoundTripReport` + توسعه‌ی `TexsaImport` (importMode/storageUrl/projectId + روابط back).
+- منبع رکورد (`recordSource` + `texsaImportId` + `texsaSourceRowId`) به `Project/Payment/DetailBoq/SummaryBoq/FinancialSheetItem/AdjustmentReportRow` افزوده شد (round-trip بدون‌تلفات).
+- `Message` توسعه یافت: `systemType`, `mentionsJson`, `entityType`, `entityId`, `deletedAt`.
+- `CorrespondenceRecipient` برای چند گیرنده‌ی نامه افزوده شد.
+- مدل‌های تزئینی (Risk/Supplier/ChangeOrder/...) **حذف نشدند** (وابستگی ~۶۰ route) اما از ناوبری اصلی خارج‌اند.
+
+**کیفیت build و Vercel (Phase 11 جزئی)**
+- `next.config.ts`: حذف `typescript.ignoreBuildErrors`، `reactStrictMode: true`.
+- `tsconfig.json`: `exclude: ["node_modules","examples"]` (رفع تنها خطاهای موجود).
+- `package.json` scripts: `build = prisma generate && next build`، `typecheck`, `postinstall = prisma generate`, `db:migrate/deploy/seed`, `texsa:analyze/import:local/export:test`، و `build:selfhost/start:selfhost`.
+- `.env.example`: `DATABASE_URL, NEXTAUTH_SECRET, NEXTAUTH_URL, UPLOAD_PROVIDER, BLOB_READ_WRITE_TOKEN, TEXSA_IMPORT_MODE, NODE_ENV`.
+
+**دسترسی و گردش‌کار (Phase 1/4)**
+- `src/lib/auth/permissions.ts` — ماتریس مجوز مرکزی: union کامل `Permission`، نقش‌های سه‌طرف، `ROLE_PERMISSIONS`، برچسب فارسی، `hasPermission`, `getProjectAccess`, **`requireProjectPermission` (سمت سرور، از DB)** و `PermissionError`.
+- `src/lib/workflows/payment-certificate.ts` — **ماشین ۱۳ حالته‌ی صورت‌وضعیت** با جدول transition (from/action/to/permission/byParty/requiresNote/nextResponsible/workflowAction/systemMessage)، `STATE_LABELS_FA`، `ACTION_LABELS_FA`، `availableActionsForUser`، `STEPPER_STATES`، `stepIndex`.
+- `src/app/api/projects/[id]/payments/[period]/workflow/route.ts` — API گردش‌کار: GET اقدام‌های مجاز نقش‌محور؛ POST اعتبارسنجی transition + `requireProjectPermission` + کنترل طرف + به‌روزرسانی Payment + WorkflowInstance/Action + AuditLog + پیام سیستمی در کانال صورت‌وضعیت + Alert برای طرف مسئول بعدی.
+
+**احراز هویت (Phase 2)**
+- `src/lib/auth/password.ts` (scrypt با node:crypto، بدون وابستگی)، `auth-options.ts` (NextAuth Credentials + JWT)، `src/app/api/auth/[...nextauth]/route.ts`، `src/lib/auth/session.ts` (`getCurrentUser`/`getProjectContext`)، `src/components/auth-session-provider.tsx` (در layout)، `src/app/login/page.tsx` (فرم ورود + ۳ ورود سریع نمونه)، `src/middleware.ts` (محافظت از همه‌ی مسیرها با `getToken`).
+- `app-header.tsx`: نام/ایمیل کاربر از session، دکمه‌ی خروج (`signOut`)، rebrand به **Civilic**.
+
+**Seed واقعی (Phase 2/19)** — `prisma/seed.ts`
+- پروژه‌ی واقعی «پارکینگ شرقی خاتم» (C-KH-03-052، مبلغ ۳٬۳۰۹٬۴۴۳٬۹۸۹٬۱۶۶، recordSource=TEXSA)، ۳ سازمان واقعی، ۱۲ کاربر نقش‌دار (رمز `civilic`)، ۵ صورت‌وضعیت با حالت‌های مختلف گردش‌کار، ۹ کانال پیش‌فرض + ۵ کانال خودکار صورت‌وضعیت با پیام سیستمی، ۱ مکاتبه + ۲ گیرنده، ۱ سند + نسخه، ۱ تعدیل، ۲ هشدار.
+
+**سازگاری تکسا (Phase 9/10)** — `src/lib/texsa/`
+- `import/parse-svzt.ts` — اسکنر **streaming امن حافظه** برای فایل ۷۰MB+ (`streamSvztRows`) + `parseSvztString` + decode/encode XML.
+- `import/analyze-schema.ts` (`SchemaAccumulator`)، `import/preserve-raw.ts` (حفظ بدون‌تلفات raw row + schema)، `import/import-local.ts` (orchestrator streaming + batch).
+- `normalize/*` — contract/parties/price-list/measurements/payment-certificates/adjustments/deductions/transport/resources + `index.ts` (orchestrator).
+- `export/serialize-xml.ts` (بازتولید `NewDataSet` با حفظ ترتیب، CRLF)، `export/build-newdataset.ts` (استراتژی‌های export)، `export/roundtrip-report.ts` (گزارش سازگاری + درصد).
+- `.zscripts/texsa-import-local.ts` و `.zscripts/texsa-export-test.ts` (CLI dev).
+
+### چه چیزی کار می‌کند (راستی‌آزمایی‌شده)
+- ✅ `bunx tsc --noEmit` = ۰ خطا.
+- ✅ `bunx eslint .` = بدون خطا.
+- ✅ `bunx prisma validate` + `generate` = موفق.
+- ✅ `bunx next build` = موفق (همه‌ی routeها + `/login` + `/api/.../workflow` + middleware/proxy).
+
+### چگونه تست شود
+1. یک PostgreSQL آماده کنید و `DATABASE_URL`/`NEXTAUTH_SECRET`/`NEXTAUTH_URL` را در `.env` بگذارید (نمونه در `.env.example`).
+2. `bun install` → `bun run db:deploy` (یا `db:push`) → `bun run db:seed`.
+3. `bun run dev` → ورود با `preparer@sivantadbir.ir` / `review@sharestan.ir` / `approver@khatam.ac.ir` (رمز `civilic`).
+4. import واقعی: `bun run texsa:import:local "Important project.svzt"` سپس `bun run texsa:export:test`.
+
+### چه چیزی هنوز نیاز به کار دارد (شفاف)
+- **UI گردش‌کار صورت‌وضعیت**: stepper + جدول اقلام + side-panel مالی + دکمه‌ی primary نقش‌محور هنوز به API جدید `/workflow` وصل نشده (موتور و API آماده‌اند؛ کامپوننت فعلی از `transition-v2` ۶-حالته استفاده می‌کند).
+- **چت گروهی UI** (Phase 5): مدل‌ها/کانال‌ها/seed آماده‌اند؛ پنل چت فعلی هنوز مدل thread قدیمی را استفاده می‌کند — نیاز به اتصال به `ProjectChannel/Message` + read receipt/mention.
+- **مکاتبات/اسناد/متره/تعدیل UI** (Phase 6/7/8): مدل و seed آماده؛ صفحات UI اختصاصی نیاز به ساخت/اتصال.
+- **session→store sync کامل** برای نقش/طرف per-project در داشبورد (الان نام/ایمیل از session می‌آید؛ partyType/role دمو باقی است).
+- **اجرای migration/seed**: در sandbox فاقد PostgreSQL بود؛ seed فقط typecheck شد، اجرا نشد (باید روی محیط با DB اجرا شود).
+- **import production**: مسیر آپلود مستقیم به storage + job (الان فقط مسیر local/dev پیاده است).
+
+### ریسک‌های شناخته‌شده
+- چون DB در sandbox نبود، `db:seed`/`db:deploy` اجرا و راستی‌آزمایی نشده؛ ممکن است نیاز به جزئی‌اصلاح هنگام اولین اجرا روی Postgres باشد (هرچند با schema typecheck شده‌اند).
+- مسیرهای قدیمی API (مثل `transition-v2`) هنوز userId را از body می‌گیرند (بدون session)؛ مسیر جدید `/workflow` از session استفاده می‌کند. یکپارچه‌سازی کامل مسیرهای قدیمی با session باقی مانده.
+- `next-auth/middleware` در Next 16 با تابع صریح `getToken` جایگزین شد (re-export به‌عنوان function شناخته نمی‌شد).
+
+
+---
+
+## Multi-Tenant SaaS / Platform Admin Correction
+Agent: Kiro (Claude Opus 4.8). راستی‌آزمایی: `tsc --noEmit` ۰ خطا، `eslint` بدون خطا، `prisma validate/generate` موفق، `next build` موفق (۳۸ صفحه، شامل `/admin` و `/api/admin/*`).
+
+### اصلاح محصول (مهم)
+- **Civilic یک محصول عمومی SaaS چندمستاجرتی است، نه سامانه‌ی مخصوص خاتم.** پروژه‌ی «پارکینگ شرقی خاتم» و فایل `Important project.svzt` فقط: (۱) داده‌ی دمو، (۲) مرجع سازگاری تکسا، (۳) fixture تست import/export هستند.
+- هیچ نام/کاربر/پروژه‌ی ثابتی در کد hard-code نیست؛ همه فقط در seed/دمو هستند و قابل ویرایش/حذف‌اند.
+- دو سطح محصول جدا شد: **اپ کاربری** (`/`, دامنه `app.civilic.ir`) و **پنل مدیر سامانه** (`/admin`, دامنه `admin.civilic.ir`).
+
+### چه چیزی اضافه/تغییر کرد
+**مدل داده‌ی SaaS** (`prisma/schema.prisma`) — افزایشی:
+- `TenantMember`, `OrganizationMember`, `RoleTemplate`, `Role`, `Plan`, `Subscription`, `Invoice`, `PaymentTransaction`, `UsageMetric`, `FeatureFlag`, `PlatformAuditLog`, `SupportAccessGrant`.
+- `Tenant`: `slug` (یکتا، برای زیردامنه‌ی آینده) + `isActive` + روابط.
+- `User`: `isPlatformAdmin` + `platformRole` + عضویت‌های tenant/organization.
+- نکته‌ی کلیدی: نوع طرف (EMPLOYER/CONSULTANT/CONTRACTOR) **پروژه‌محور** است؛ یک Organization می‌تواند در پروژه‌های مختلف نقش متفاوت داشته باشد (از طریق `ProjectParty`).
+
+**نقش‌های پیکربندی‌پذیر** (`src/lib/auth/permissions.ts`):
+- نقش‌ها و پلتفرم‌رول‌ها + `requirePlatformPermission` + `getPlatformAccess`.
+- `resolveRolePermissions(role, tenantId)` **DB-driven**: ابتدا `Role` سفارشی tenant، سپس `RoleTemplate`، سپس fallback به ثابت‌های کد. کلیدهای permission در کد canonical می‌مانند اما تخصیص‌ها از DB می‌آیند.
+
+**پنل مدیر سامانه** (`src/app/admin/*` + `src/components/admin/admin-shell.tsx`):
+- layout با gate سمت‌سرور (فقط `isPlatformAdmin`؛ کاربر عادی به `/` هدایت می‌شود).
+- صفحات: داشبورد (آمار)، مستاجرها (لیست + ساخت + فعال/غیرفعال)، کاربران (لیست + ساخت)، پروژه‌ها (لیست سراسری)، پلن‌ها، صورتحساب‌ها (صدور + ثبت پرداخت دستی).
+
+**APIهای مدیریت** (`src/app/api/admin/*`) — همه با `requirePlatformPermission`:
+- `overview`, `tenants` (GET/POST), `tenants/[id]` (GET/PATCH فعال‌سازی)، `users` (GET/POST)، `projects` (GET)، `plans` (GET/POST upsert)، `invoices` (GET/POST)، `invoices/[id]/pay` (ثبت پرداخت). + `platformAudit` برای ممیزی.
+
+**ساخت پروژه‌ی عمومی و tenant-scoped** (`src/app/api/projects/route.ts`):
+- حذف `tenantId: "tenant-demo"` hard-coded. اکنون tenant از **session** گرفته می‌شود (مدیر سامانه می‌تواند tenant بدهد).
+- POST از طرفین اختیاری (انتخاب/ساخت سازمان) و ساخت خودکار کانال‌های پیش‌فرض پشتیبانی می‌کند. پروژه‌ها قابل ساخت مکرر برای هر مشتری/پروژه‌اند.
+
+**seed عمومی** (`prisma/seed.ts`):
+- RoleTemplateها (پروژه‌ای + پلتفرمی)، ۴ پلن (آزمایشی/پایه/حرفه‌ای/سازمانی)، tenant پلتفرم + `owner@civilic.ir`/`admin@civilic.ir`، tenant دمو «دموی Civilic» + اشتراک فعال + سنجه‌ی مصرف + صورتحساب نمونه، و سپس داده‌ی دموی خاتم زیر همان tenant (قابل حذف).
+
+**میدل‌ور و دامنه** (`src/middleware.ts` + `docs/deployment-domain-strategy.md`):
+- تشخیص host: `admin.`/`console.` → rewrite ریشه به `/admin`. محافظت از همه‌ی مسیرها با session.
+- سند استراتژی دامنه/استقرار اضافه شد (app vs admin vs زیردامنه‌ی tenant آینده).
+
+### تست
+- ✅ `tsc --noEmit` = ۰ خطا · ✅ `eslint .` = بدون خطا · ✅ `prisma validate/generate` · ✅ `next build` (۳۸ صفحه).
+- ورود مدیر سامانه: `owner@civilic.ir` / `admin@civilic.ir` (رمز `civilic`) → `/admin`.
+- ورود کاربر دمو: `preparer@sivantadbir.ir` و … (رمز `civilic`) → اپ کاربری.
+
+### پذیرش پوشش‌داده‌شده (پس از `db:deploy`+`db:seed` روی Postgres)
+ورود مدیر سامانه → پنل مدیریت → ساخت tenant/سازمان/کاربر → مدیریت پلن/صورتحساب/پرداخت دستی → ساخت پروژه‌ی جدید مستقل از خاتم (tenant-scoped). خاتم فقط یک پروژه‌ی دمو است.
+
+### کار باقی‌مانده (شفاف)
+- اتصال کامل wizard ساخت پروژه به مراحل طرفین/کاربران/workflow/تکسا (API آماده است؛ wizard فعلی فیلدهای پایه را می‌فرستد).
+- tenant-scoping بقیه‌ی routeهای قدیمی که هنوز `"tenant-demo"` را hard-code می‌کنند (dashboard/base-data/...) — باید مثل `/api/projects` به session منتقل شوند.
+- impersonation/SupportAccessGrant UI، usage metering خودکار، و اتصال feature flags.
+- اجرای واقعی `db:deploy`/`db:seed` (sandbox فاقد PostgreSQL است).
+
+
+---
+
+## UI/UX Desktop-First Responsive Polish Phase
+Agent: Kiro (Claude Opus 4.8). راستی‌آزمایی: `tsc --noEmit` ۰ خطا، `eslint .` بدون خطا، `prisma generate` موفق، `next build` موفق (۳۹ صفحه).
+
+### هدف
+ارتقای Civilic از حس «دمو» به یک SaaS فارسی/RTL حرفه‌ای، **دسکتاپ‌محور** و responsive. بدون افزودن بک‌اند غیرمرتبط (فقط داده‌ی لازم برای UI).
+
+### تغییرات اصلی
+**ممیزی** — `docs/ui-ux-audit.md` (مشکل/چرا/اصلاح برای هر ناحیه).
+
+**سیستم طراحی**
+- `src/lib/design/tokens.ts`: tone‌های وضعیت، نگاشت فارسی وضعیت صورت‌وضعیت (۱۳ حالت) + عمومی، برچسب طرف/نقش (client-safe).
+- **recolor** کل تم در `globals.css` از کهربایی → **ایندیگو/آبی حرفه‌ای** (light + dark)، حذف گرادیان‌های کهربایی.
+- کامپوننت‌های مشترک: `MetricCard`, `EmptyState`, `StatusBadge`, `ResponsiveTable` (جدول دسکتاپ + کارت موبایل)، `PageHeader`, `SectionCard`.
+
+**سایدبار و هدر و ناوبری موبایل**
+- `app-sidebar.tsx` بازنویسی شد: دسکتاپ‌محور، **پیش‌فرض باز** (store: `sidebarCollapsed=false`)، collapsible با دکمه‌ی شناور، برند Civilic بالا، نقش/خروج (session) پایین، رنگ active با توکن primary، `hidden md:flex`.
+- **`MobileNav`** جدید: Sheet از سمت راست (RTL) برای موبایل؛ store: `mobileNavOpen`/`setMobileNav`.
+- `app-header.tsx`: دکمه‌ی همبرگر (موبایل → drawer، دسکتاپ → toggle)، حذف گرادیان کهربایی، برند موبایل Civilic.
+- `page.tsx`: افزودن `<MobileNav />`.
+
+**کارتابل من** — `workbench-view.tsx` کاملاً بازطراحی شد:
+- API جدید `src/app/api/workbench/route.ts` (session-scoped، نقش‌محور): اقدامات منتظر، در حال بررسی، پیام‌های خوانده‌نشده، مکاتبات، پروژه‌های اخیر، هشدارها — **داده‌ی واقعی seed، بدون داده‌ی fake**.
+- چیدمان grid دسکتاپ (۳ ستون): متریک‌ها + اقدامات منتظر + بررسی + ستون کناری پیام/مکاتبه + ردیف پایین پروژه‌ها/هشدارها. CTA اصلی نقش‌محور (پیمانکار/مشاور/کارفرما/مدیر سامانه). حذف کامل آیتم‌های جعلی قبلی (متروی تهران و …).
+
+**داشبورد مدیریت** — `admin/page.tsx` بازطراحی شد: ردیف متریک فشرده، مشتری‌های اخیر، صورتحساب‌های اخیر، اقدامات سریع — با کامپوننت‌های مشترک.
+- سایدبار مدیریت (`admin-shell.tsx`) به ۱۱ آیتم کامل ارتقا یافت (پیشخوان/مشتری/سازمان/کاربران/پروژه/نقش/پلن/صورتحساب/مصرف/لاگ/تنظیمات).
+- صفحات placeholder: `admin/{organizations,roles,usage,logs,settings}` با EmptyState «در حال توسعه» تا لینک‌ها سالم بمانند.
+
+**فهرست پروژه‌ها** — `projects-view.tsx` بازنویسی شد: حذف type-gradient/رینگ دایره‌ای جعلی؛ کارت‌های حرفه‌ای با طرفین (کارفرما/مشاور/پیمانکار)، نقش من، گردش‌کار باز، مبلغ پیمان، StatusBadge، دکمه‌ی «ورود به پروژه»؛ نمای grid/list، جستجو و فیلتر وضعیت.
+- `/api/projects` GET توسعه یافت: شامل parties + نقش کاربر + شمار گردش‌کار باز (همچنان فیلدهای قبلی برای sidebar/command-palette حفظ شد).
+
+### Responsive
+- دسکتاپ: سایدبار دائمی راست + باز پیش‌فرض، grid چندستونه، `max-w-[1600px]`.
+- تبلت: سایدبار جمع‌شدنی، grid ۲ستونه.
+- موبایل: سایدبار → Sheet راست، کارت‌ها عمودی، ResponsiveTable → کارت، بدون overflow افقی کنترل‌نشده.
+
+### تست
+- ✅ `tsc --noEmit` = ۰ خطا · ✅ `eslint .` = بدون خطا · ✅ `prisma generate` · ✅ `next build` (۳۹ صفحه).
+
+### کار باقی‌مانده (شفاف)
+- پولیش صفحه‌ی جزئیات پروژه (هدر/تب‌ها) و تبدیل جداول مدیریت به `ResponsiveTable` (کارت موبایل) — جداول فعلی روی دسکتاپ تمیزند اما موبایل scroll افقی دارند.
+- اتصال DirectionProvider صریح Radix (در حال حاضر `dir="rtl"` روی html کافی است؛ dropdown/sheet درست عمل می‌کنند).
+- صفحات placeholder مدیریت (سازمان/نقش/مصرف/لاگ/تنظیمات) به پیاده‌سازی کامل نیاز دارند.

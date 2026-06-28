@@ -4,6 +4,7 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/components/theme-provider";
 import { QueryProvider } from "@/components/query-provider";
+import { AuthSessionProvider } from "@/components/auth-session-provider";
 
 const vazirmatn = Vazirmatn({
   subsets: ["arabic", "latin"],
@@ -12,7 +13,7 @@ const vazirmatn = Vazirmatn({
 });
 
 export const metadata: Metadata = {
-  title: "متره‌یار | پلتفرم متره و برآورد پروژه‌های عمرانی",
+  title: "Civilic | سامانه مدیریت پروژه و صورت‌وضعیت عمرانی",
   description:
     "پلتفرم SaaS مدرن برای متره و برآورد، صورت‌وضعیت‌نویسی و تعدیل پروژه‌های عمرانی — جایگزین وب نرم‌افزار تکسا",
   keywords: [
@@ -46,7 +47,9 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <QueryProvider>
-            {children}
+            <AuthSessionProvider>
+              {children}
+            </AuthSessionProvider>
             <Toaster />
           </QueryProvider>
         </ThemeProvider>

@@ -1,187 +1,219 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardContent } from "@/components/ui/card";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Inbox, UploadCloud, FolderTree, FileText, MessageSquare,
-  AlertCircle, ArrowLeft, Clock, CheckCircle2,
+  FolderTree, MessageSquare, FileText, AlertCircle, ArrowLeft,
+  ClipboardCheck, CheckCircle2, ShieldCheck, Receipt, Bell, ChevronLeft,
 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { toFa, faMoney, toJalali } from "@/lib/fa";
 import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/ui/page-header";
+import { MetricCard } from "@/components/ui/metric-card";
+import { SectionCard } from "@/components/ui/section-card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { Skeleton } from "@/components/ui/skeleton";
+
+interface WorkbenchData {
+  isPlatformAdmin: boolean;
+  partyTypes: string[];
+  counts: { pending: number; inReview: number; unreadMessages: number; letters: number; alerts: number };
+  pendingPayments: { id: string; projectId: string; projectName: string; periodNo: number; status: string; amount: number }[];
+  inReview: { id: string; projectId: string; projectName: string; periodNo: number; status: string; amount: number }[];
+  alerts: { id: string; title: string; message: string; severity: string; projectId: string | null }[];
+  letters: { id: string; letterNo: string | null; subject: string; status: string; projectId: string | null; date: string | null }[];
+  messages: { id: string; body: string; senderName: string; channel: string; projectId: string; createdAt: string }[];
+  recentProjects: { id: string; name: string; code: string; status: string; contractAmount: number; role: string | null; partyType: string | null }[];
+}
 
 export function WorkbenchView() {
-  const { setView, selectProject, currentUser } = useAppStore();
-
-  const { data, isLoading } = useQuery({
-    queryKey: ["dashboard"],
-    queryFn: async () => {
-      const r = await fetch("/api/dashboard");
-      return r.json();
-    },
+  const { setView, selectProject } = useAppStore();
+  const { data, isLoading } = useQuery<WorkbenchData>({
+    queryKey: ["workbench"],
+    queryFn: async () => (await fetch("/api/workbench")).json(),
   });
 
-  const { stats, projectStats } = data || {};
-
-  // Role-based items
-  const PARTY_LABELS: Record<string, string> = {
-    EMPLOYER: "کارفرما",
-    CONSULTANT: "مشاور",
-    CONTRACTOR: "پیمانکار",
-  };
-
-  const ROLE_LABELS: Record<string, string> = {
-    RESIDENT_ENGINEER: "ناظر مقیم",
-    CONSULTANT_REVIEWER: "دفتر فنی مشاور",
-    CONSULTANT_APPROVER: "تأییدکننده مشاور",
-    CONTRACTOR_PM: "مدیر پروژه پیمانکار",
-    SITE_MANAGER: "رئیس کارگاه",
-    QUANTITY_SURVEYOR: "مترور",
-    BILLING_EXPERT: "کارشناس صورت‌وضعیت",
-    EMPLOYER_PM: "مدیر پروژه کارفرما",
-    EMPLOYER_REVIEWER: "رسیدگی‌کننده کارفرما",
-    EMPLOYER_APPROVER: "مقام تأیید کارفرما",
-    PAYMENT_OFFICER: "مسئول پرداخت",
-  };
+  const primary = primaryCta(data);
 
   return (
-    <div className="space-y-6 p-4 md:p-8 max-w-5xl">
-      {/* Welcome */}
-      <div>
-        <h1 className="text-xl font-bold mb-0.5">کارتابل من</h1>
-        <p className="text-sm text-muted-foreground">
-          {currentUser.userName} — {PARTY_LABELS[currentUser.partyType]} / {ROLE_LABELS[currentUser.role] || currentUser.role}
-        </p>
+    <div className="mx-auto max-w-[1600px] space-y-5 p-4 md:p-6 lg:p-8">
+      <PageHeader
+        title="کارتابل من"
+        subtitle="کارهای مهم، پیام‌ها و پروژه‌های شما در یک نگاه"
+        action={
+          primary.href ? (
+            <Button asChild size="lg" className="h-10 gap-2"><Link href={primary.href}>{primary.icon}{primary.label}</Link></Button>
+          ) : (
+            <Button size="lg" className="h-10 gap-2" onClick={primary.onClick}>{primary.icon}{primary.label}</Button>
+          )
+        }
+      />
+
+      {/* metrics */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <MetricCard label="اقدامات منتظر من" value={toFa(data?.counts.pending ?? 0)} icon={ClipboardCheck} tone="warning" loading={isLoading} />
+        <MetricCard label="در حال بررسی" value={toFa(data?.counts.inReview ?? 0)} icon={Receipt} tone="info" loading={isLoading} />
+        <MetricCard label="پیام‌های خوانده‌نشده" value={toFa(data?.counts.unreadMessages ?? 0)} icon={MessageSquare} tone="default" loading={isLoading} />
+        <MetricCard label="هشدارهای مهم" value={toFa(data?.counts.alerts ?? 0)} icon={Bell} tone="danger" loading={isLoading} />
       </div>
 
-      {/* Primary action */}
-      <div className="flex flex-wrap gap-3">
-        <Button size="lg" className="h-11 gap-2 bg-amber-600 hover:bg-amber-700" onClick={() => setView("projects")}>
-          <FolderTree className="size-5" />
-          باز کردن پروژه
-        </Button>
-        <Button size="lg" variant="outline" className="h-11 gap-2" onClick={() => setView("settings")}>
-          <UploadCloud className="size-5" />
-          وارد کردن فایل تکسا
-        </Button>
-      </div>
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        {/* main column */}
+        <div className="space-y-5 lg:col-span-2">
+          <SectionCard title="اقدامات منتظر من" icon={<ClipboardCheck className="size-4" />} bodyClassName="p-0">
+            {isLoading ? (
+              <div className="space-y-2 p-4">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
+            ) : (data?.pendingPayments.length ?? 0) === 0 ? (
+              <div className="p-4"><EmptyState icon={CheckCircle2} title="اقدام منتظری ندارید" description="همه‌ی صورت‌وضعیت‌های مرتبط با شما رسیدگی شده‌اند." /></div>
+            ) : (
+              <ul className="divide-y">
+                {data!.pendingPayments.map((p) => (
+                  <li key={p.id}>
+                    <button onClick={() => selectProject(p.projectId, "payment")} className="flex w-full items-center gap-3 px-4 py-3 text-start transition-colors hover:bg-muted/40">
+                      <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Receipt className="size-4" /></div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium">صورت‌وضعیت شماره {toFa(p.periodNo)} — {p.projectName}</div>
+                        <div className="text-[11px] text-muted-foreground">{faMoney(p.amount)}</div>
+                      </div>
+                      <StatusBadge status={p.status} kind="payment" />
+                      <ChevronLeft className="size-4 shrink-0 text-muted-foreground" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </SectionCard>
 
-      {/* 4 KPIs max */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {isLoading ? (
-          [1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-20" />)
-        ) : (
-          <>
-            <KPICard label="پروژه‌های فعال" value={toFa(stats?.activeProjects || 0)} />
-            <KPICard label="صورت‌وضعیت‌ها" value={toFa(stats?.totalPayments || 0)} />
-            <KPICard label="مبلغ کل پیمان" value={faMoney(stats?.totalContract || 0)} />
-            <KPICard
-              label="اقدامات فوری"
-              value={toFa(2)}
-              highlight
-            />
-          </>
-        )}
-      </div>
+          <SectionCard title="صورت‌وضعیت‌های منتظر بررسی" icon={<Receipt className="size-4" />} bodyClassName="p-0">
+            {isLoading ? (
+              <div className="space-y-2 p-4">{[1, 2].map((i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+            ) : (data?.inReview.length ?? 0) === 0 ? (
+              <div className="p-4"><EmptyState title="موردی برای بررسی نیست" /></div>
+            ) : (
+              <ul className="divide-y">
+                {data!.inReview.map((p) => (
+                  <li key={p.id}>
+                    <button onClick={() => selectProject(p.projectId, "payment")} className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-start hover:bg-muted/40">
+                      <span className="min-w-0 truncate text-sm">شماره {toFa(p.periodNo)} — {p.projectName}</span>
+                      <StatusBadge status={p.status} kind="payment" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </SectionCard>
+        </div>
 
-      {/* Action items — role-based */}
-      <div>
-        <h2 className="text-sm font-bold mb-3">اقدام‌های فوری من</h2>
-        <div className="space-y-2">
-          <ActionItem
-            icon={Clock}
-            title="صورت‌وضعیت دوره ۲ — منتظر بررسی مشاور"
-            desc="پروژه متروی تهران خط ۷ — ارسال‌شده توسط پیمانکار"
-            badge="در انتظار"
-            badgeColor="bg-amber-100 text-amber-800"
-            onClick={() => selectProject("proj-metro7", "payment")}
-          />
-          <ActionItem
-            icon={MessageSquare}
-            title="پیام جدید در کانال پروژه پل روگذار"
-            desc="احمد میرزایی: ریزمتره فصل ۲ به‌روزرسانی شد"
-            badge="جدید"
-            badgeColor="bg-emerald-100 text-emerald-800"
-            onClick={() => selectProject("proj-bridge", "discussion")}
-          />
-          <ActionItem
-            icon={FileText}
-            title="نامه رسمی از کارفرما"
-            desc="درخواست توضیح درباره تأخیر عملیات خاکبرداری"
-            badge="مکاتبه"
-            badgeColor="bg-purple-100 text-purple-800"
-            onClick={() => selectProject("proj-metro7", "documents")}
-          />
+        {/* side column */}
+        <div className="space-y-5">
+          <SectionCard title="پیام‌های خوانده‌نشده" icon={<MessageSquare className="size-4" />} bodyClassName="p-0"
+            action={<Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={() => setView("messages")}>همه <ArrowLeft className="size-3" /></Button>}>
+            {isLoading ? (
+              <div className="space-y-2 p-4">{[1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+            ) : (data?.messages.length ?? 0) === 0 ? (
+              <div className="p-4"><EmptyState icon={MessageSquare} title="پیام خوانده‌نشده‌ای ندارید" /></div>
+            ) : (
+              <ul className="divide-y">
+                {data!.messages.map((m) => (
+                  <li key={m.id} className="px-4 py-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium">{m.senderName}</span>
+                      <span className="text-[10px] text-muted-foreground">{m.channel}</span>
+                    </div>
+                    <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{m.body}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </SectionCard>
+
+          <SectionCard title="مکاتبات ارجاع‌شده" icon={<FileText className="size-4" />} bodyClassName="p-0">
+            {isLoading ? (
+              <div className="space-y-2 p-4">{[1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+            ) : (data?.letters.length ?? 0) === 0 ? (
+              <div className="p-4"><EmptyState icon={FileText} title="مکاتبه‌ای به شما ارجاع نشده است" /></div>
+            ) : (
+              <ul className="divide-y">
+                {data!.letters.map((l) => (
+                  <li key={l.id} className="px-4 py-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-xs font-medium">{l.subject}</span>
+                      <StatusBadge status={l.status} />
+                    </div>
+                    <div className="mt-0.5 text-[10px] text-muted-foreground">{l.letterNo && <span dir="ltr">{l.letterNo}</span>} {l.date && <span> • {toJalali(l.date)}</span>}</div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </SectionCard>
         </div>
       </div>
 
-      {/* Recent projects */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-bold">آخرین پروژه‌ها</h2>
-          <Button variant="ghost" size="sm" className="text-xs gap-1" onClick={() => setView("projects")}>
-            همه <ArrowLeft className="size-3" />
-          </Button>
-        </div>
-        {isLoading ? (
-          <div className="space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-14" />)}</div>
-        ) : (
-          <div className="space-y-2">
-            {(projectStats || []).slice(0, 5).map((p: any) => (
-              <button
-                key={p.id}
-                onClick={() => selectProject(p.id)}
-                className="flex w-full items-center gap-3 rounded-lg border p-3 text-right transition-colors hover:bg-muted/30"
-              >
-                <div className={cn("size-2 rounded-full shrink-0", p.status === "ACTIVE" ? "bg-emerald-500" : "bg-amber-400")} />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate">{p.name}</div>
-                  <div className="text-[11px] text-muted-foreground">{p.code} • {faMoney(p.contractAmount)}</div>
-                </div>
-                <Badge variant="outline" className="text-[9px] shrink-0">{p.status === "ACTIVE" ? "فعال" : "پیش‌نویس"}</Badge>
-                <ArrowLeft className="size-4 text-muted-foreground shrink-0" />
-              </button>
-            ))}
-          </div>
-        )}
+      {/* bottom */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <SectionCard title="پروژه‌های اخیر" icon={<FolderTree className="size-4" />} bodyClassName="p-0"
+          action={<Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={() => setView("projects")}>همه <ArrowLeft className="size-3" /></Button>}>
+          {isLoading ? (
+            <div className="space-y-2 p-4">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+          ) : (data?.recentProjects.length ?? 0) === 0 ? (
+            <div className="p-4"><EmptyState icon={FolderTree} title="هنوز پروژه‌ای ندارید" description="برای شروع، یک پروژه ایجاد کنید یا فایل تکسا وارد کنید." action={<Button size="sm" onClick={() => setView("projects")}>پروژه‌ها</Button>} /></div>
+          ) : (
+            <ul className="divide-y">
+              {data!.recentProjects.map((p) => (
+                <li key={p.id}>
+                  <button onClick={() => selectProject(p.id)} className="flex w-full items-center gap-3 px-4 py-3 text-start hover:bg-muted/40">
+                    <span className={cn("size-2 shrink-0 rounded-full", p.status === "ACTIVE" ? "bg-emerald-500" : "bg-amber-400")} />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">{p.name}</div>
+                      <div className="text-[10px] text-muted-foreground"><span dir="ltr">{p.code}</span> • {faMoney(p.contractAmount)}</div>
+                    </div>
+                    {p.partyType && <StatusBadge label={partyFa(p.partyType)} tone="info" />}
+                    <ChevronLeft className="size-4 shrink-0 text-muted-foreground" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SectionCard>
+
+        <SectionCard title="هشدارهای مهم" icon={<AlertCircle className="size-4" />} bodyClassName="p-0">
+          {isLoading ? (
+            <div className="space-y-2 p-4">{[1, 2].map((i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+          ) : (data?.alerts.length ?? 0) === 0 ? (
+            <div className="p-4"><EmptyState icon={CheckCircle2} title="هشداری وجود ندارد" /></div>
+          ) : (
+            <ul className="divide-y">
+              {data!.alerts.map((a) => (
+                <li key={a.id} className="flex items-start gap-3 px-4 py-3">
+                  <div className={cn("mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg", a.severity === "WARNING" ? "bg-amber-50 text-amber-600" : a.severity === "CRITICAL" ? "bg-rose-50 text-rose-600" : "bg-blue-50 text-blue-600")}>
+                    <AlertCircle className="size-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">{a.title}</div>
+                    <p className="truncate text-[11px] text-muted-foreground">{a.message}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SectionCard>
       </div>
     </div>
   );
 }
 
-function KPICard({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
-  return (
-    <Card className={cn("border shadow-sm", highlight && "border-amber-300 bg-amber-50/50 dark:bg-amber-950/20")}>
-      <CardContent className="p-4">
-        <div className="text-[11px] text-muted-foreground">{label}</div>
-        <div className={cn("text-lg font-bold tabular-nums mt-1", highlight && "text-amber-700 dark:text-amber-300")}>{value}</div>
-      </CardContent>
-    </Card>
-  );
+function partyFa(pt: string): string {
+  return pt === "EMPLOYER" ? "کارفرما" : pt === "CONSULTANT" ? "مشاور" : pt === "CONTRACTOR" ? "پیمانکار" : pt;
 }
 
-function ActionItem({
-  icon: Icon, title, desc, badge, badgeColor, onClick,
-}: {
-  icon: typeof Clock; title: string; desc: string; badge: string; badgeColor: string; onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-lg border p-3 text-right transition-colors hover:bg-muted/30"
-    >
-      <div className="size-9 rounded-lg bg-amber-50 dark:bg-amber-950/30 flex items-center justify-center shrink-0">
-        <Icon className="size-4 text-amber-600" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium truncate">{title}</div>
-        <div className="text-[11px] text-muted-foreground truncate">{desc}</div>
-      </div>
-      <Badge className={cn("text-[9px] shrink-0", badgeColor)}>{badge}</Badge>
-      <ArrowLeft className="size-4 text-muted-foreground shrink-0" />
-    </button>
-  );
+function primaryCta(data?: WorkbenchData): { label: string; icon: React.ReactNode; href?: string; onClick?: () => void } {
+  if (data?.isPlatformAdmin) return { label: "ورود به مدیریت سامانه", icon: <ShieldCheck className="size-5" />, href: "/admin" };
+  const pt = data?.partyTypes ?? [];
+  if (pt.includes("CONTRACTOR")) return { label: "ایجاد صورت‌وضعیت جدید", icon: <Receipt className="size-5" />, onClick: () => useAppStore.getState().setView("projects") };
+  if (pt.includes("CONSULTANT")) return { label: "بررسی موارد ارجاع‌شده", icon: <ClipboardCheck className="size-5" />, onClick: () => useAppStore.getState().setView("projects") };
+  if (pt.includes("EMPLOYER")) return { label: "تایید موارد منتظر کارفرما", icon: <CheckCircle2 className="size-5" />, onClick: () => useAppStore.getState().setView("projects") };
+  return { label: "باز کردن پروژه‌ها", icon: <FolderTree className="size-5" />, onClick: () => useAppStore.getState().setView("projects") };
 }
