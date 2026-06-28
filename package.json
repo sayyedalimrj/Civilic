@@ -19,7 +19,8 @@
     "db:seed": "bun prisma/seed.ts",
     "texsa:analyze": "python3 .zscripts/analyze_svzt.py \"Important project.svzt\" \"src/lib/texsa/generated-schema.json\"",
     "texsa:import:local": "bun .zscripts/texsa-import-local.ts",
-    "texsa:export:test": "bun .zscripts/texsa-export-test.ts"
+    "texsa:export:test": "bun .zscripts/texsa-export-test.ts",
+    "test:review": "bun .zscripts/test-review-logic.ts"
   },
   "prisma": {
     "seed": "bun prisma/seed.ts"
