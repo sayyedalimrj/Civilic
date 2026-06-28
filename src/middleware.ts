@@ -33,6 +33,6 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!login|api/auth|_next/static|_next/image|favicon.ico|logo.svg|robots.txt).*)",
+    "/((?!login|api/auth|api/health|api/bootstrap|_next/static|_next/image|favicon.ico|logo.svg|robots.txt).*)",
   ],
 };
