@@ -64,6 +64,7 @@ import {
   CommandSeparator,
 } from "@/components/ui/command";
 import { useQuery } from "@tanstack/react-query";
+import { useSession, signOut } from "next-auth/react";
 import { cn } from "@/lib/utils";
 import { ChatPanel } from "@/components/chat/chat-panel";
 import { AlertsPanel } from "@/components/alerts/alerts-panel";
@@ -197,6 +198,8 @@ function NotificationIcon({ type }: { type: NotificationItem["type"] }) {
 
 export function AppHeader() {
   const { theme, setTheme } = useTheme();
+  const { data: session } = useSession();
+  const userName = (session?.user?.name as string) || "کاربر مهمان";
   const {
     toggleSidebar,
     sidebarCollapsed,
@@ -334,9 +337,9 @@ export function AppHeader() {
             <Building2 className="size-5" />
           </div>
           <div className="hidden sm:block">
-            <div className="text-sm font-bold leading-tight">متره‌یار</div>
+            <div className="text-sm font-bold leading-tight">Civilic</div>
             <div className="text-[11px] text-muted-foreground leading-tight">
-              پلتفرم متره و برآورد
+              سامانه مدیریت پروژه عمرانی
             </div>
           </div>
         </div>
@@ -609,7 +612,7 @@ export function AppHeader() {
                 <div className="relative">
                   <Avatar className="size-8 ring-2 ring-amber-200 dark:ring-amber-800">
                     <AvatarFallback className="bg-gradient-to-br from-amber-100 to-orange-100 text-amber-800 dark:from-amber-900 dark:to-orange-900 dark:text-amber-200">
-                      {initials("سید علی میرجعفری")}
+                      {initials(userName)}
                     </AvatarFallback>
                   </Avatar>
                   {/* Online status indicator */}
@@ -619,10 +622,10 @@ export function AppHeader() {
                 </div>
                 <div className="hidden text-right sm:block">
                   <div className="text-xs font-semibold leading-tight">
-                    سید علی میرجعفری
+                    {userName}
                   </div>
                   <div className="text-[10px] text-muted-foreground leading-tight">
-                    مدیر سازمان
+                    {(session?.user?.email as string) || "—"}
                   </div>
                 </div>
               </Button>
@@ -639,7 +642,10 @@ export function AppHeader() {
                 راهنما و پشتیبانی
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-destructive focus:text-destructive">
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onClick={() => signOut({ callbackUrl: "/login" })}
+              >
                 خروج از حساب
               </DropdownMenuItem>
             </DropdownMenuContent>

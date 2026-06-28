@@ -6,7 +6,9 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  // Production = PostgreSQL. برای dev می‌توان provider را به "sqlite" تغییر داد
+  // و DATABASE_URL را به یک فایل محلی اشاره داد (بدون تغییر کد اپ).
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -218,6 +220,7 @@ model Project {
   longitude       Float?
   description     String?
   texsaImportId   String?
+  recordSource    String   @default("CIVILIC") // CIVILIC | TEXSA
   coefficients    String   @default("{}")
   cachedTotal     Float    @default(0)
   cachedExecuted  Float    @default(0)
@@ -270,6 +273,10 @@ model DetailBoq {
   // قفل هم‌زمانی
   lockedBy        String?
   lockedAt        DateTime?
+  // ── منبع رکورد (سازگاری تکسا) ──
+  recordSource    String   @default("CIVILIC")
+  texsaImportId   String?
+  texsaSourceRowId String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -289,6 +296,9 @@ model SummaryBoq {
   description     String
   unit            String
   totalQuantity   Float    @default(0) // مجموع از ریزمتره
+  recordSource    String   @default("CIVILIC")
+  texsaImportId   String?
+  texsaSourceRowId String?
   updatedAt       DateTime @updatedAt
 
   project         Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -314,6 +324,9 @@ model FinancialSheetItem {
   // آنالیز بها (۴ عامل) به‌صورت JSON
   analysis      String   @default("{}")
   chapterNo     Int      @default(1) // فصل مربوطه
+  recordSource  String   @default("CIVILIC")
+  texsaImportId String?
+  texsaSourceRowId String?
   updatedAt     DateTime @updatedAt
 
   project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -378,6 +391,10 @@ model Payment {
   netPayable      Float    @default(0)
   // موعد ارسال
   dueDate         DateTime?
+  // ── منبع رکورد (سازگاری تکسا) ──
+  recordSource    String   @default("CIVILIC") // CIVILIC | TEXSA
+  texsaImportId   String?
+  texsaSourceRowId String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -687,6 +704,10 @@ model AdjustmentReportRow {
   // نوع تعدیل: TEMPORARY (موقت) | FINAL (قطعی) | REVERSE (معکوس)
   adjustmentType     String   @default("TEMPORARY")
   notes              String?
+  // ── منبع رکورد (سازگاری تکسا) ──
+  recordSource       String   @default("CIVILIC")
+  texsaImportId      String?
+  texsaSourceRowId   String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -943,8 +964,18 @@ model TexsaImport {
   errorsJson       String   @default("[]")
   totalRows        Int      @default(0)
   totalTables      Int      @default(0)
+  // حالت import: LOCAL | PREVIEW | PRODUCTION
+  importMode       String   @default("LOCAL")
+  storageUrl       String?  // محل فایل در storage (production)
+  projectId        String?  // پروژه‌ی نرمال‌شده‌ی حاصل
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+
+  tableSchemas     TexsaTableSchema[]
+  rawRows          TexsaRawRow[]
+  mappingIssues    TexsaMappingIssue[]
+  exportJobs       TexsaExportJob[]
+  roundTripReports TexsaRoundTripReport[]
 
   @@index([status])
 }
@@ -2901,6 +2932,15 @@ model Message {
   body            String
   attachmentIdsJson String @default("[]")
   replyToId       String?
+  // پیام سیستمی workflow (SUBMIT/RETURN/APPROVE/...) — null برای پیام عادی کاربر
+  systemType      String?
+  // mention‌ها: JSON ["user-1","user-2"]
+  mentionsJson    String   @default("[]")
+  // اتصال به موجودیت (PAYMENT | ADJUSTMENT | CORRESPONDENCE | DOCUMENT | MEASUREMENT)
+  entityType      String?
+  entityId        String?
+  // soft delete
+  deletedAt       DateTime?
   createdAt       DateTime @default(now())
   editedAt        DateTime?
 
@@ -2974,4 +3014,147 @@ model DocumentVersion {
   document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@index([documentId])
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی سازگاری تکسا — Schema / Raw / Mapping / Export / Round-trip
+//  (بدون‌تلفات: حفظ ترتیب جدول/ردیف/ستون و مقادیر رشته‌ای)
+// ═══════════════════════════════════════════════════════════
+
+/** schema یک جدول تکسا در یک import مشخص (با ترتیب) */
+model TexsaTableSchema {
+  id          String   @id @default(cuid())
+  importId    String
+  tableName   String   // نام XML جدول (مثل brv_rzmt)
+  tableOrder  Int      // ترتیب ظهور جدول در فایل
+  rowCount    Int      @default(0)
+  domain      String?  // دسته‌ی معنایی از table-map.ts
+  normalized  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  import      TexsaImport       @relation(fields: [importId], references: [id], onDelete: Cascade)
+  columns     TexsaColumnSchema[]
+
+  @@unique([importId, tableName])
+  @@index([importId])
+}
+
+/** schema یک ستون تکسا (با ترتیب و شمارش non-empty) */
+model TexsaColumnSchema {
+  id            String   @id @default(cuid())
+  tableSchemaId String
+  columnName    String
+  columnOrder   Int
+  nonEmptyCount Int      @default(0)
+
+  tableSchema   TexsaTableSchema @relation(fields: [tableSchemaId], references: [id], onDelete: Cascade)
+
+  @@unique([tableSchemaId, columnName])
+  @@index([tableSchemaId])
+}
+
+/** یک ردیف خام تکسا — حفظ کامل بدون تفسیر (rawJson) با ترتیب */
+model TexsaRawRow {
+  id          String   @id @default(cuid())
+  importId    String
+  tableName   String
+  rowOrder    Int      // ترتیب ردیف در جدول (برای round-trip)
+  rawJson     String   // JSON رشته‌ای از ستون‌ها با ترتیب اصلی
+  // علامت‌گذاری round-trip
+  normalizedEntityType String? // PAYMENT | PARTY | ...
+  normalizedEntityId   String?
+  isEdited    Boolean  @default(false) // آیا معادل Civilic ویرایش شده
+  createdAt   DateTime @default(now())
+
+  import      TexsaImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@index([importId, tableName])
+  @@index([importId, tableName, rowOrder])
+}
+
+/** قانون نگاشت جدول/ستون تکسا → موجودیت محصول */
+model TexsaMappingRule {
+  id            String   @id @default(cuid())
+  tableName     String   @unique
+  targetEntity  String   // Project | ProjectParty | Payment | DetailBoq | ...
+  fieldMapJson  String   @default("{}") // نگاشت ستون→فیلد
+  exportStrategy String  @default("ROUND_TRIP_RAW") // ROUND_TRIP_RAW | UPDATE_TEXSA_ROW | CREATE_TEXSA_ROW | CIVILIC_ONLY | NOT_EXPORTABLE
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+}
+
+/** مشکل/هشدار نگاشت در فرآیند import/normalize */
+model TexsaMappingIssue {
+  id        String   @id @default(cuid())
+  importId  String
+  severity  String   @default("WARNING") // INFO | WARNING | ERROR
+  tableName String?
+  rowOrder  Int?
+  fieldName String?
+  message   String
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+
+  import    TexsaImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@index([importId])
+  @@index([severity])
+}
+
+/** کار export به فرمت سازگار تکسا */
+model TexsaExportJob {
+  id          String   @id @default(cuid())
+  importId    String
+  projectId   String?
+  status      String   @default("PENDING") // PENDING | RUNNING | DONE | FAILED
+  strategy    String   @default("ROUND_TRIP_RAW")
+  outputUrl   String?  // محل فایل خروجی .svzt
+  statsJson   String   @default("{}")
+  errorMessage String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  import      TexsaImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@index([importId])
+  @@index([status])
+}
+
+/** گزارش round-trip سازگاری */
+model TexsaRoundTripReport {
+  id                  String   @id @default(cuid())
+  importId            String
+  exportJobId         String?
+  importedTableCount  Int      @default(0)
+  importedRowCount    Int      @default(0)
+  normalizedEntities  Int      @default(0)
+  editedRecords       Int      @default(0)
+  exportableRecords   Int      @default(0)
+  civilicOnlyRecords  Int      @default(0)
+  preservedRawFields  Int      @default(0)
+  warningCount        Int      @default(0)
+  errorCount          Int      @default(0)
+  compatibilityPct    Float    @default(0)
+  detailsJson         String   @default("{}")
+  createdAt           DateTime @default(now())
+
+  import              TexsaImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@index([importId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  گیرنده‌ی نامه (چند گیرنده برای مکاتبات)
+// ═══════════════════════════════════════════════════════════
+model CorrespondenceRecipient {
+  id          String   @id @default(cuid())
+  letterId    String
+  partyId     String   // ProjectParty
+  kind        String   @default("TO") // TO | CC
+  readAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  @@unique([letterId, partyId])
+  @@index([letterId])
 }
