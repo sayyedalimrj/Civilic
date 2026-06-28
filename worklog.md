@@ -1349,3 +1349,37 @@ Agent: Kiro (Claude Opus 4.8). راستی‌آزمایی: `db:generate` ✅، `t
 - ✅ ورود مدیر سامانه → `/admin`؛ کاربر دمو → اپ.
 - ✅ ورود به callbackUrl احترام گذاشته می‌شود.
 - ✅ مشکل Preview Protection مستند شد.
+
+
+---
+
+## Construction Redline Review + Texsa Calculation Sequence
+Agent: Kiro (Claude Opus 4.8). راستی‌آزمایی: `db:generate` ✅، `typecheck` ۰ خطا، `lint` بدون خطا، `next build` موفق (۳۹ صفحه شامل routeهای رسیدگی).
+
+### تحلیل مجدد فایل واقعی (قرارداد سازگاری)
+- `Important project.svzt` دوباره با `analyze_svzt.py` تحلیل شد: بدون تغییر (۴۵ جدول، ۷۸٬۹۸۸ ردیف).
+- **`docs/texsa-calculation-sequence.md`** نوشته شد: جریان کامل (پیمان → طرفین → فهرست‌بها/ضرایب → اقلام → ریزمتره → خلاصه‌متره → برگه مالی → صورت‌وضعیت → کسورات → تعدیل → حمل/مصالح → خروجی)، نمودار وابستگی، و کشف کلیدی: **بُعد `_type` تکسا = همان لایه‌ی طرف (پیمانکار/مشاور/کارفرما)** و `_nusv_previous`/`_type_previous` = زنجیره‌ی نسخه. این مبنای سازگاری redline است.
+
+### مدل لایه‌های رسیدگی (Redline)
+- مدل‌های افزایشی: `PaymentCertificateItemReview`, `AdjustmentItemReview`, `MeasurementItemReview`, `LineItemChangeLog`, `CalculationNode` + back-relation روی PaymentItem/AdjustmentReportRow/DetailBoq. هیچ مقدار ثبت‌شده‌ای overwrite نمی‌شود؛ هر اصلاح یک لایه‌ی جدید با `previousReviewId` و provenance (`source`, `texsaSourceRowId`).
+- `src/lib/review/layers.ts` (خالص): رنگ طرف (پیمانکار آبی، مشاور قرمز، کارفرما سبز)، تصمیم‌ها (APPROVED_AS_IS/REVISED/REJECTED/NEEDS_EXPLANATION)، `resolveEffective()` (مقدار مؤثر از بالاترین لایه)، `buildDisplayStack()` (علامت خط‌خورده).
+- `src/lib/review/service.ts`: `addPaymentItemReview` (لایه‌ی جدید + غیرمؤثرکردن لایه‌ی قبلی همان طرف + LineItemChangeLog + بازمحاسبه‌ی `adjustedAmount`)، `bulkApproveAsIs`، `paymentReviewSummary` (مبالغ سه‌لایه + اختلاف‌ها).
+
+### موتور وابستگی محاسبات
+- `src/lib/calculation/dependency-engine.ts`: مراحل و گراف وابستگی، `markDependentsStale` (با حفظ LOCKED)، `getCalculationStatus`، `recalculate*`، parity (IMPORTED_FROM_TEXSA / CIVILIC_CALCULATED / NEEDS_TEXSA_PARITY_REVIEW). تغییر بالادست → پایین‌دست STALE.
+
+### APIها
+- `POST /api/projects/[id]/payments/[period]/items/[itemId]/review` (مشاور/کارفرما، permission + اعتبارسنجی نرم: توضیح الزامی برای اصلاح/رد).
+- `GET /api/projects/[id]/payments/[period]/review` (اقلام + لایه‌ها + خلاصه + ریل توالی)؛ `POST` همان (action=approve_all).
+
+### UI رسیدگی (دسکتاپ‌محور، RTL)
+- کامپوننت‌ها در `src/components/review/`: `ReviewValueCell` (لایه‌های روی‌هم با خط‌خورده)، `PartyReviewBadge`، `StrikeThroughValue`، `PaymentReviewSummary` (سه‌لایه + اختلاف)، `CalculationSequenceRail` (ریل توالی با وضعیت)، `PaymentReviewView` (جدول رسیدگی + خلاصه + ریل + تایید گروهی + دیالوگ اصلاح با توضیح الزامی).
+- اتصال: در `payments-view.tsx` داخل Sheet جزئیات، تب «رسیدگی ردیفی (Redline)» در کنار «ثبت اجرا» اضافه شد.
+
+### round-trip
+- `roundtrip-report.ts` توسعه یافت: کامل‌بودن توالی (`sequenceCompletePct`)، مراحل stale، و آمار رسیدگی (ردیف‌های رسیدگی/اصلاح‌شده، لایه‌های مشاور/کارفرما) در گزارش و `detailsJson`.
+
+### کار باقی‌مانده (شفاف)
+- view اختصاصی redline برای **تعدیل** (مدل `AdjustmentItemReview` + رنگ‌ها آماده‌اند؛ فقط UI مشابه payment باقی است) و برای **متره** (`MeasurementItemReview`).
+- اتصال خودکار `markDependentsStale` به نقاط ویرایش بالادست (موتور آماده است؛ فراخوانی در همه‌ی mutationها باقی مانده).
+- parity کامل فرمول‌های ریالی با تکسا (فعلاً مقادیر import‌شده source of truth و علامت NEEDS_TEXSA_PARITY_REVIEW).

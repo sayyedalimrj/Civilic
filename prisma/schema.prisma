@@ -296,6 +296,7 @@ model DetailBoq {
 
   project         Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
   priceListItem   PriceListItem? @relation(fields: [priceListItemId], references: [id])
+  reviews         MeasurementItemReview[]
 
   @@index([projectId])
   @@index([code])
@@ -436,6 +437,7 @@ model PaymentItem {
 
   payment            Payment             @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   financialSheet     FinancialSheetItem? @relation(fields: [financialSheetId], references: [id])
+  reviews            PaymentCertificateItemReview[]
 
   @@index([paymentId])
 }
@@ -726,6 +728,7 @@ model AdjustmentReportRow {
   updatedAt          DateTime @updatedAt
 
   project            Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  reviews            AdjustmentItemReview[]
 
   @@index([projectId])
   @@index([paymentId])
@@ -3388,4 +3391,132 @@ model SupportAccessGrant {
 
   @@index([tenantId])
   @@index([grantedToId])
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌های رسیدگی ردیفی (Redline / Review Layers)
+//  نگاشت به بُعد _type تکسا: CONTRACTOR=0 | CONSULTANT=1/2 | EMPLOYER=4
+//  هیچ مقدار ثبت‌شده‌ای حذف نمی‌شود؛ هر اصلاح یک لایه‌ی جدید است.
+// ═══════════════════════════════════════════════════════════
+
+/** لایه‌ی رسیدگی یک ردیف صورت‌وضعیت توسط یک طرف */
+model PaymentCertificateItemReview {
+  id                       String   @id @default(cuid())
+  paymentCertificateItemId String
+  partyType                String   // CONTRACTOR | CONSULTANT | EMPLOYER
+  reviewerUserId           String?
+  reviewerName             String?
+  reviewStage              String   // SUBMIT | CONSULTANT_REVIEW | EMPLOYER_REVIEW
+  decision                 String   @default("APPROVED_AS_IS") // APPROVED_AS_IS | REVISED | REJECTED | NEEDS_EXPLANATION
+  quantity                 Float?
+  unitPrice                Float?
+  amount                   Float?
+  formula                  String?
+  comment                  String?
+  colorKey                 String?  // contractor | consultant | employer
+  source                   String   @default("CIVILIC") // TEXSA | CIVILIC | REVIEW
+  texsaSourceRowId         String?
+  previousReviewId         String?
+  isEffective              Boolean  @default(true)
+  reviewedAt               DateTime @default(now())
+  createdAt                DateTime @default(now())
+
+  item                     PaymentItem @relation(fields: [paymentCertificateItemId], references: [id], onDelete: Cascade)
+
+  @@index([paymentCertificateItemId])
+  @@index([partyType])
+}
+
+/** لایه‌ی رسیدگی یک ردیف تعدیل */
+model AdjustmentItemReview {
+  id               String   @id @default(cuid())
+  adjustmentItemId String
+  partyType        String
+  reviewerUserId   String?
+  reviewerName     String?
+  reviewStage      String
+  decision         String   @default("APPROVED_AS_IS")
+  baseAmount       Float?
+  indexValue       Float?
+  coefficient      Float?
+  adjustmentAmount Float?
+  comment          String?
+  colorKey         String?
+  source           String   @default("CIVILIC")
+  texsaSourceRowId String?
+  previousReviewId String?
+  isEffective      Boolean  @default(true)
+  reviewedAt       DateTime @default(now())
+  createdAt        DateTime @default(now())
+
+  item             AdjustmentReportRow @relation(fields: [adjustmentItemId], references: [id], onDelete: Cascade)
+
+  @@index([adjustmentItemId])
+  @@index([partyType])
+}
+
+/** لایه‌ی رسیدگی یک ردیف متره (ریزمتره/خلاصه‌متره) */
+model MeasurementItemReview {
+  id                String   @id @default(cuid())
+  measurementItemId String
+  partyType         String
+  reviewerUserId    String?
+  reviewerName      String?
+  decision          String   @default("APPROVED_AS_IS")
+  quantity          Float?
+  formula           String?
+  comment           String?
+  colorKey          String?
+  source            String   @default("CIVILIC")
+  texsaSourceRowId  String?
+  previousReviewId  String?
+  isEffective       Boolean  @default(true)
+  reviewedAt        DateTime @default(now())
+  createdAt         DateTime @default(now())
+
+  item              DetailBoq @relation(fields: [measurementItemId], references: [id], onDelete: Cascade)
+
+  @@index([measurementItemId])
+  @@index([partyType])
+}
+
+/** لاگ تغییر فیلد ردیفی (redline trail) — هرگز overwrite بدون ثبت */
+model LineItemChangeLog {
+  id             String   @id @default(cuid())
+  entityType     String   // PAYMENT_ITEM | ADJUSTMENT_ITEM | MEASUREMENT_ITEM
+  entityId       String
+  fieldName      String
+  oldValue       String?
+  newValue       String?
+  actorUserId    String?
+  actorPartyType String?
+  reason         String?
+  createdAt      DateTime @default(now())
+
+  @@index([entityType, entityId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  موتور وابستگی محاسبات (Calculation Dependency Engine)
+// ═══════════════════════════════════════════════════════════
+model CalculationNode {
+  id                String   @id @default(cuid())
+  projectId         String
+  entityType        String
+  entityId          String
+  stage             String   // CONTRACT | PRICE_LIST | PRICE_LIST_ITEM | MEASUREMENT_DETAIL | MEASUREMENT_SUMMARY | FINANCIAL_SHEET | PAYMENT_CERTIFICATE | DEDUCTION | ADJUSTMENT | TRANSPORT | EXPORT
+  status            String   @default("FRESH") // FRESH | STALE | NEEDS_REVIEW | LOCKED
+  parity            String   @default("CIVILIC_CALCULATED") // IMPORTED_FROM_TEXSA | CIVILIC_CALCULATED | NEEDS_TEXSA_PARITY_REVIEW
+  dependsOnJson     String   @default("[]") // آرایه‌ی stageهای بالادست
+  staleReason       String?
+  texsaSourceRowId  String?
+  lastCalculatedAt  DateTime?
+  lastCalculatedBy  String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([projectId, stage])
+  @@index([projectId])
+  @@index([status])
 }

@@ -4,6 +4,7 @@
  */
 import { db } from "@/lib/db";
 import { TEXSA_TABLES } from "../table-map";
+import { getCalculationStatus } from "@/lib/calculation/dependency-engine";
 
 export interface RoundTripReport {
   importedTableCount: number;
@@ -16,6 +17,17 @@ export interface RoundTripReport {
   warningCount: number;
   errorCount: number;
   compatibilityPct: number;
+  // توالی محاسبات (مطابق docs/texsa-calculation-sequence.md)
+  sequence: { stage: string; label: string; status: string; parity: string }[];
+  sequenceCompletePct: number;
+  staleStages: string[];
+  // رسیدگی ردیفی (redline)
+  review: {
+    reviewedItems: number;       // ردیف‌هایی که حداقل یک لایه‌ی رسیدگی دارند
+    revisedItems: number;        // ردیف‌های اصلاح‌شده
+    consultantReviewed: number;  // لایه‌های مشاور
+    employerFinal: number;       // لایه‌های کارفرما
+  };
   details: {
     normalizedTables: string[];
     rawOnlyTables: string[];
@@ -57,6 +69,28 @@ export async function generateRoundTripReport(importId: string): Promise<RoundTr
   const warnings = issues.filter((i) => i.severity === "WARNING").length;
   const errors = issues.filter((i) => i.severity === "ERROR").length;
 
+  // توالی محاسبات + لایه‌های رسیدگی
+  let sequence: { stage: string; label: string; status: string; parity: string }[] = [];
+  let staleStages: string[] = [];
+  const review = { reviewedItems: 0, revisedItems: 0, consultantReviewed: 0, employerFinal: 0 };
+  if (imp?.projectId) {
+    const pid = imp.projectId;
+    const seq = await getCalculationStatus(pid);
+    sequence = seq.map((s) => ({ stage: s.stage, label: s.label, status: s.status, parity: s.parity }));
+    staleStages = seq.filter((s) => s.status === "STALE" || s.status === "NEEDS_REVIEW").map((s) => s.label);
+
+    const reviews = await db.paymentCertificateItemReview.findMany({
+      where: { item: { payment: { projectId: pid } }, isEffective: true },
+      select: { paymentCertificateItemId: true, partyType: true, decision: true },
+    });
+    review.reviewedItems = new Set(reviews.map((r) => r.paymentCertificateItemId)).size;
+    review.revisedItems = new Set(reviews.filter((r) => r.decision === "REVISED" || r.decision === "REJECTED").map((r) => r.paymentCertificateItemId)).size;
+    review.consultantReviewed = reviews.filter((r) => r.partyType === "CONSULTANT").length;
+    review.employerFinal = reviews.filter((r) => r.partyType === "EMPLOYER").length;
+  }
+  const freshCount = sequence.filter((s) => s.status === "FRESH" || s.status === "LOCKED").length;
+  const sequenceCompletePct = sequence.length > 0 ? Math.round((freshCount / sequence.length) * 100) : 0;
+
   // درصد سازگاری: نسبت ردیف‌های قابل بازتولید (همه‌ی raw حفظ‌شده) منهای خطاها
   const compatibilityPct = rawCount > 0 ? Math.max(0, Math.round((1 - errors / Math.max(rawCount, 1)) * 100)) : 0;
 
@@ -71,6 +105,10 @@ export async function generateRoundTripReport(importId: string): Promise<RoundTr
     warningCount: warnings,
     errorCount: errors,
     compatibilityPct,
+    sequence,
+    sequenceCompletePct,
+    staleStages,
+    review,
     details: { normalizedTables, rawOnlyTables },
   };
 
@@ -87,7 +125,7 @@ export async function generateRoundTripReport(importId: string): Promise<RoundTr
       warningCount: report.warningCount,
       errorCount: report.errorCount,
       compatibilityPct: report.compatibilityPct,
-      detailsJson: JSON.stringify(report.details),
+      detailsJson: JSON.stringify({ ...report.details, sequence: report.sequence, sequenceCompletePct, staleStages, review }),
     },
   });
 
