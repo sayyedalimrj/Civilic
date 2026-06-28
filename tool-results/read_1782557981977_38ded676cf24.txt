@@ -1,0 +1,809 @@
+     1→"use client";
+     2→
+     3→import * as React from "react";
+     4→import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+     5→import {
+     6→  Plus,
+     7→  Search,
+     8→  Pencil,
+     9→  Trash2,
+    10→  ListChecks,
+    11→  Database,
+    12→  Loader2,
+    13→  Save,
+    14→  RefreshCw,
+    15→} from "lucide-react";
+    16→
+    17→import { useAppStore } from "@/lib/store";
+    18→import { faNum, faMoney, toFa } from "@/lib/fa";
+    19→import { useToast } from "@/hooks/use-toast";
+    20→import { cn } from "@/lib/utils";
+    21→
+    22→import { Button } from "@/components/ui/button";
+    23→import { Input } from "@/components/ui/input";
+    24→import { Label } from "@/components/ui/label";
+    25→import { Badge } from "@/components/ui/badge";
+    26→import { Card, CardContent } from "@/components/ui/card";
+    27→import { Skeleton } from "@/components/ui/skeleton";
+    28→import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+    29→import {
+    30→  Dialog,
+    31→  DialogContent,
+    32→  DialogDescription,
+    33→  DialogFooter,
+    34→  DialogHeader,
+    35→  DialogTitle,
+    36→  DialogTrigger,
+    37→} from "@/components/ui/dialog";
+    38→import {
+    39→  Select,
+    40→  SelectContent,
+    41→  SelectItem,
+    42→  SelectTrigger,
+    43→  SelectValue,
+    44→} from "@/components/ui/select";
+    45→import {
+    46→  Table,
+    47→  TableBody,
+    48→  TableCell,
+    49→  TableHead,
+    50→  TableHeader,
+    51→  TableRow,
+    52→} from "@/components/ui/table";
+    53→
+    54→// ─── Types ───────────────────────────────────────────────────────────
+    55→interface DetailBoqItem {
+    56→  id: string;
+    57→  projectId: string;
+    58→  priceListItemId: string | null;
+    59→  code: string;
+    60→  description: string;
+    61→  unit: string;
+    62→  quantity: number;
+    63→  priceListItem?: { id: string; code: string; title: string; unit: string; unitPrice: number } | null;
+    64→}
+    65→
+    66→interface CascadeResult {
+    67→  summaryBoqUpdated: number;
+    68→  financialSheetTotal: number;
+    69→  chaptersUpdated: number;
+    70→}
+    71→
+    72→interface ProjectResponse {
+    73→  project: {
+    74→    id: string;
+    75→    name: string;
+    76→    code: string;
+    77→    priceListId: string | null;
+    78→    priceList?: {
+    79→      id: string;
+    80→      year: number;
+    81→      discipline: string;
+    82→      title: string;
+    83→      items: PriceListItem[];
+    84→    } | null;
+    85→    detailBoqs: DetailBoqItem[];
+    86→    summaryBoqs: { id: string; code: string }[];
+    87→    financialSheet: { id: string }[];
+    88→  };
+    89→}
+    90→
+    91→interface PriceListItem {
+    92→  id: string;
+    93→  code: string;
+    94→  title: string;
+    95→  unit: string;
+    96→  unitPrice: number;
+    97→}
+    98→
+    99→// ─── Helpers ─────────────────────────────────────────────────────────
+   100→const UNITS = ["مترمربع", "مترمکعب", "متر طول", "تن", "عدد", "کیلوگرم", "لیتر", "دستگاه", "ورق", "گلوله"];
+   101→
+   102→/** تبدیل اعداد فارسی/عربی به لاتین برای ورودی عددی */
+   103→function parseFaNumber(input: string): number {
+   104→  const en = input
+   105→    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
+   106→    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+   107→    .replace(/[,،\s]/g, "");
+   108→  const n = parseFloat(en);
+   109→  return isFinite(n) ? n : 0;
+   110→}
+   111→
+   112→// ─── Editable Quantity Cell with 800ms debounce ──────────────────────
+   113→function QuantityCell({
+   114→  item,
+   115→  onCommit,
+   116→}: {
+   117→  item: DetailBoqItem;
+   118→  onCommit: (itemId: string, quantity: number) => void;
+   119→}) {
+   120→  const [value, setValue] = React.useState(toFa(item.quantity.toString()));
+   121→  const [pending, setPending] = React.useState(false);
+   122→  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+   123→
+   124→  // Sync when server value changes
+   125→  React.useEffect(() => {
+   126→    setValue(toFa(item.quantity.toString()));
+   127→  }, [item.quantity]);
+   128→
+   129→  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+   130→    const raw = e.target.value;
+   131→    setValue(raw);
+   132→    setPending(true);
+   133→    if (timerRef.current) clearTimeout(timerRef.current);
+   134→    timerRef.current = setTimeout(() => {
+   135→      const n = parseFaNumber(raw);
+   136→      onCommit(item.id, n);
+   137→      setPending(false);
+   138→    }, 800);
+   139→  };
+   140→
+   141→  React.useEffect(() => {
+   142→    return () => {
+   143→      if (timerRef.current) clearTimeout(timerRef.current);
+   144→    };
+   145→  }, []);
+   146→
+   147→  return (
+   148→    <div className="relative">
+   149→      <Input
+   150→        type="text"
+   151→        inputMode="decimal"
+   152→        dir="ltr"
+   153→        value={value}
+   154→        onChange={handleChange}
+   155→        className={cn(
+   156→          "h-9 w-32 text-left tabular-nums",
+   157→          pending && "border-amber-500/60 ring-2 ring-amber-500/20",
+   158→        )}
+   159→        aria-label="مقدار"
+   160→      />
+   161→      {pending && (
+   162→        <Loader2 className="pointer-events-none absolute left-1.5 top-1/2 size-3.5 -translate-y-1/2 animate-spin text-amber-500" />
+   163→      )}
+   164→    </div>
+   165→  );
+   166→}
+   167→
+   168→// ─── Add/Edit Row Dialog ─────────────────────────────────────────────
+   169→interface RowFormValues {
+   170→  code: string;
+   171→  description: string;
+   172→  unit: string;
+   173→  quantity: string;
+   174→  priceListItemId: string;
+   175→}
+   176→
+   177→function RowFormDialog({
+   178→  projectId,
+   179→  priceListId,
+   180→  priceListItems,
+   181→  editing,
+   182→  onSaved,
+   183→}: {
+   184→  projectId: string;
+   185→  priceListId: string | null;
+   186→  priceListItems: PriceListItem[];
+   187→  editing: DetailBoqItem | null;
+   188→  onSaved: (cascade: CascadeResult | null) => void;
+   189→}) {
+   190→  const { toast } = useToast();
+   191→  const qc = useQueryClient();
+   192→  const [open, setOpen] = React.useState(false);
+   193→  const [search, setSearch] = React.useState("");
+   194→  const [form, setForm] = React.useState<RowFormValues>({
+   195→    code: "",
+   196→    description: "",
+   197→    unit: "مترمربع",
+   198→    quantity: "",
+   199→    priceListItemId: "",
+   200→  });
+   201→
+   202→  React.useEffect(() => {
+   203→    if (open) {
+   204→      if (editing) {
+   205→        setForm({
+   206→          code: editing.code,
+   207→          description: editing.description,
+   208→          unit: editing.unit,
+   209→          quantity: toFa(editing.quantity.toString()),
+   210→          priceListItemId: editing.priceListItemId || "",
+   211→        });
+   212→      } else {
+   213→        setForm({
+   214→          code: "",
+   215→          description: "",
+   216→          unit: "مترمربع",
+   217→          quantity: "",
+   218→          priceListItemId: "",
+   219→        });
+   220→      }
+   221→      setSearch("");
+   222→    }
+   223→  }, [open, editing]);
+   224→
+   225→  const filteredItems = React.useMemo(() => {
+   226→    const q = search.trim().toLowerCase();
+   227→    if (!q) return priceListItems.slice(0, 50);
+   228→    return priceListItems
+   229→      .filter(
+   230→        (i) =>
+   231→          i.code.toLowerCase().includes(q) ||
+   232→          i.title.toLowerCase().includes(q),
+   233→      )
+   234→      .slice(0, 50);
+   235→  }, [search, priceListItems]);
+   236→
+   237→  const mutation = useMutation({
+   238→    mutationFn: async () => {
+   239→      const payload = {
+   240→        code: form.code.trim(),
+   241→        description: form.description.trim(),
+   242→        unit: form.unit,
+   243→        quantity: parseFaNumber(form.quantity),
+   244→        priceListItemId: form.priceListItemId || undefined,
+   245→      };
+   246→      if (editing) {
+   247→        const r = await fetch(`/api/projects/${projectId}/detail-boq`, {
+   248→          method: "PUT",
+   249→          headers: { "Content-Type": "application/json" },
+   250→          body: JSON.stringify({ itemId: editing.id, ...payload }),
+   251→        });
+   252→        if (!r.ok) throw new Error(await r.text());
+   253→        return r.json() as Promise<{ item: DetailBoqItem; cascade: CascadeResult }>;
+   254→      } else {
+   255→        const r = await fetch(`/api/projects/${projectId}/detail-boq`, {
+   256→          method: "POST",
+   257→          headers: { "Content-Type": "application/json" },
+   258→          body: JSON.stringify(payload),
+   259→        });
+   260→        if (!r.ok) throw new Error(await r.text());
+   261→        return r.json() as Promise<{ item: DetailBoqItem; cascade: CascadeResult }>;
+   262→      }
+   263→    },
+   264→    onSuccess: (data) => {
+   265→      qc.invalidateQueries({ queryKey: ["project", projectId] });
+   266→      setOpen(false);
+   267→      onSaved(data.cascade);
+   268→    },
+   269→    onError: (err: Error) => {
+   270→      toast({
+   271→        variant: "destructive",
+   272→        title: "خطا در ذخیره ردیف",
+   273→        description: err.message || "لطفاً دوباره تلاش کنید",
+   274→      });
+   275→    },
+   276→  });
+   277→
+   278→  // Pick a price list item to autofill
+   279→  const pickPriceListItem = (pli: PriceListItem) => {
+   280→    setForm((f) => ({
+   281→      ...f,
+   282→      priceListItemId: pli.id,
+   283→      code: pli.code,
+   284→      unit: pli.unit,
+   285→      description: pli.title,
+   286→    }));
+   287→  };
+   288→
+   289→  const canSubmit =
+   290→    form.code.trim().length > 0 &&
+   291→    form.description.trim().length > 0 &&
+   292→    form.unit.length > 0;
+   293→
+   294→  return (
+   295→    <Dialog open={open} onOpenChange={setOpen}>
+   296→      <DialogTrigger asChild>
+   297→        {editing ? (
+   298→          <Button variant="ghost" size="icon" className="size-9" aria-label="ویرایش">
+   299→            <Pencil className="size-4" />
+   300→          </Button>
+   301→        ) : (
+   302→          <Button className="h-9">
+   303→            <Plus className="size-4" />
+   304→            افزودن ردیف
+   305→          </Button>
+   306→        )}
+   307→      </DialogTrigger>
+   308→      <DialogContent className="sm:max-w-2xl">
+   309→        <DialogHeader>
+   310→          <DialogTitle>
+   311→            {editing ? "ویرایش ردیف ریزمتره" : "افزودن ردیف ریزمتره"}
+   312→          </DialogTitle>
+   313→          <DialogDescription>
+   314→            کد، شرح، واحد و مقدار را وارد کنید. پس از ذخیره، خلاصه‌متره و برگه مالی به‌صورت خودکار بازمحاسبه می‌شوند.
+   315→          </DialogDescription>
+   316→        </DialogHeader>
+   317→
+   318→        {/* آیتم‌های فهرست بها picker */}
+   319→        {priceListId && priceListItems.length > 0 && (
+   320→          <div className="rounded-lg border bg-muted/30 p-3">
+   321→            <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+   322→              <Database className="size-3.5" />
+   323→              انتخاب از فهرست بها
+   324→              <Badge variant="secondary" className="text-[10px]">
+   325→                {toFa(priceListItems.length)} آیتم
+   326→              </Badge>
+   327→            </div>
+   328→            <div className="relative mb-2">
+   329→              <Search className="absolute right-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+   330→              <Input
+   331→                placeholder="جستجو بر اساس کد یا شرح…"
+   332→                value={search}
+   333→                onChange={(e) => setSearch(e.target.value)}
+   334→                className="h-9 pr-7 text-sm"
+   335→              />
+   336→            </div>
+   337→            <div className="max-h-44 overflow-y-auto rounded-md border bg-background">
+   338→              {filteredItems.length === 0 ? (
+   339→                <div className="p-3 text-center text-xs text-muted-foreground">
+   340→                  نتیجه‌ای یافت نشد
+   341→                </div>
+   342→              ) : (
+   343→                <ul className="divide-y">
+   344→                  {filteredItems.map((pli) => (
+   345→                    <li key={pli.id}>
+   346→                      <button
+   347→                        type="button"
+   348→                        onClick={() => pickPriceListItem(pli)}
+   349→                        className="flex w-full items-center gap-3 px-3 py-2 text-right transition-colors hover:bg-accent"
+   350→                      >
+   351→                        <Badge variant="outline" className="shrink-0 font-mono text-[11px]">
+   352→                          {pli.code}
+   353→                        </Badge>
+   354→                        <span className="min-w-0 flex-1 truncate text-sm">{pli.title}</span>
+   355→                        <span className="shrink-0 text-[11px] text-muted-foreground">{pli.unit}</span>
+   356→                        <span className="shrink-0 text-[11px] tabular-nums text-amber-700 dark:text-amber-400">
+   357→                          {faNum(pli.unitPrice)} ریال
+   358→                        </span>
+   359→                      </button>
+   360→                    </li>
+   361→                  ))}
+   362→                </ul>
+   363→              )}
+   364→            </div>
+   365→          </div>
+   366→        )}
+   367→
+   368→        <div className="grid gap-4 sm:grid-cols-2">
+   369→          <div className="grid gap-2">
+   370→            <Label htmlFor="rf-code">کد</Label>
+   371→            <Input
+   372→              id="rf-code"
+   373→              value={form.code}
+   374→              onChange={(e) => setForm((f) => ({ ...f, code: e.target.value }))}
+   375→              placeholder="مثلاً 010101"
+   376→              dir="ltr"
+   377→              className="h-9 text-left"
+   378→            />
+   379→          </div>
+   380→          <div className="grid gap-2">
+   381→            <Label htmlFor="rf-unit">واحد</Label>
+   382→            <Select value={form.unit} onValueChange={(v) => setForm((f) => ({ ...f, unit: v }))}>
+   383→              <SelectTrigger id="rf-unit" className="h-9 w-full">
+   384→                <SelectValue placeholder="انتخاب واحد" />
+   385→              </SelectTrigger>
+   386→              <SelectContent>
+   387→                {UNITS.map((u) => (
+   388→                  <SelectItem key={u} value={u}>
+   389→                    {u}
+   390→                  </SelectItem>
+   391→                ))}
+   392→              </SelectContent>
+   393→            </Select>
+   394→          </div>
+   395→          <div className="grid gap-2 sm:col-span-2">
+   396→            <Label htmlFor="rf-desc">شرح</Label>
+   397→            <Input
+   398→              id="rf-desc"
+   399→              value={form.description}
+   400→              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+   401→              placeholder="شرح عملیات"
+   402→              className="h-9"
+   403→            />
+   404→          </div>
+   405→          <div className="grid gap-2">
+   406→            <Label htmlFor="rf-qty">مقدار</Label>
+   407→            <Input
+   408→              id="rf-qty"
+   409→              value={form.quantity}
+   410→              onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))}
+   411→              placeholder="مثلاً ۱۲۵٫۵"
+   412→              dir="ltr"
+   413→              className="h-9 text-left tabular-nums"
+   414→            />
+   415→          </div>
+   416→        </div>
+   417→
+   418→        <DialogFooter>
+   419→          <Button variant="outline" onClick={() => setOpen(false)} className="h-9">
+   420→            انصراف
+   421→          </Button>
+   422→          <Button
+   423→            onClick={() => mutation.mutate()}
+   424→            disabled={!canSubmit || mutation.isPending}
+   425→            className="h-9"
+   426→          >
+   427→            {mutation.isPending ? (
+   428→              <Loader2 className="size-4 animate-spin" />
+   429→            ) : (
+   430→              <Save className="size-4" />
+   431→            )}
+   432→            ذخیره
+   433→          </Button>
+   434→        </DialogFooter>
+   435→      </DialogContent>
+   436→    </Dialog>
+   437→  );
+   438→}
+   439→
+   440→// ─── Main View ───────────────────────────────────────────────────────
+   441→export function DetailBoqView() {
+   442→  const projectId = useAppStore((s) => s.selectedProjectId);
+   443→  const { toast } = useToast();
+   444→  const qc = useQueryClient();
+   445→
+   446→  const { data, isLoading, isError, refetch, isFetching } = useQuery<ProjectResponse>({
+   447→    queryKey: ["project", projectId],
+   448→    queryFn: async () => {
+   449→      const r = await fetch(`/api/projects/${projectId}`);
+   450→      if (!r.ok) throw new Error("بارگذاری پروژه ناموفق بود");
+   451→      return r.json();
+   452→    },
+   453→    enabled: !!projectId,
+   454→  });
+   455→
+   456→  // Fetch price-list items when project has a priceListId
+   457→  const priceListId = data?.project?.priceListId ?? null;
+   458→  const { data: priceListItemsData } = useQuery<{ items: PriceListItem[] }>({
+   459→    queryKey: ["price-list-items", priceListId],
+   460→    queryFn: async () => {
+   461→      const r = await fetch(`/api/base-data/price-lists/${priceListId}/items`);
+   462→      if (!r.ok) throw new Error("بارگذاری آیتم‌های فهرست بها ناموفق بود");
+   463→      return r.json();
+   464→    },
+   465→    enabled: !!priceListId,
+   466→  });
+   467→
+   468→  const items = data?.project?.detailBoqs ?? [];
+   469→  const priceListItems = priceListItemsData?.items ?? [];
+   470→
+   471→  // ─── Inline quantity mutation ───
+   472→  const updateMutation = useMutation({
+   473→    mutationFn: async ({ itemId, quantity }: { itemId: string; quantity: number }) => {
+   474→      const r = await fetch(`/api/projects/${projectId}/detail-boq`, {
+   475→        method: "PUT",
+   476→        headers: { "Content-Type": "application/json" },
+   477→        body: JSON.stringify({ itemId, quantity }),
+   478→      });
+   479→      if (!r.ok) throw new Error(await r.text());
+   480→      return r.json() as Promise<{ item: DetailBoqItem; cascade: CascadeResult }>;
+   481→    },
+   482→    onSuccess: (data) => {
+   483→      qc.invalidateQueries({ queryKey: ["project", projectId] });
+   484→      toastCascade(data.cascade);
+   485→    },
+   486→    onError: (err: Error) => {
+   487→      toast({
+   488→        variant: "destructive",
+   489→        title: "خطا در به‌روزرسانی مقدار",
+   490→        description: err.message,
+   491→      });
+   492→    },
+   493→  });
+   494→
+   495→  // ─── Delete mutation ───
+   496→  const deleteMutation = useMutation({
+   497→    mutationFn: async (itemId: string) => {
+   498→      const r = await fetch(
+   499→        `/api/projects/${projectId}/detail-boq?itemId=${itemId}`,
+   500→        { method: "DELETE" },
+   501→      );
+   502→      if (!r.ok) throw new Error(await r.text());
+   503→      return r.json() as Promise<{ ok: boolean; cascade: CascadeResult }>;
+   504→    },
+   505→    onSuccess: (data) => {
+   506→      qc.invalidateQueries({ queryKey: ["project", projectId] });
+   507→      toastCascade(data.cascade, "ردیف حذف شد");
+   508→    },
+   509→    onError: (err: Error) => {
+   510→      toast({
+   511→        variant: "destructive",
+   512→        title: "خطا در حذف ردیف",
+   513→        description: err.message,
+   514→      });
+   515→    },
+   516→  });
+   517→
+   518→  const toastCascade = (c: CascadeResult | null, title = "ذخیره شد") => {
+   519→    if (!c) {
+   520→      toast({ title });
+   521→      return;
+   522→    }
+   523→    toast({
+   524→      title,
+   525→      description: (
+   526→        <span className="text-xs leading-5">
+   527→          خلاصه‌متره: <b>{toFa(c.summaryBoqUpdated)}</b> ردیف — برگه مالی:{" "}
+   528→          <b>{faMoney(c.financialSheetTotal)}</b> — فصول:{" "}
+   529→          <b>{toFa(c.chaptersUpdated)}</b>
+   530→        </span>
+   531→      ),
+   532→    });
+   533→  };
+   534→
+   535→  // ─── Empty / loading / error states ───
+   536→  if (!projectId) {
+   537→    return (
+   538→      <EmptyState
+   539→        icon={<ListChecks className="size-8" />}
+   540→        title="پروژه‌ای انتخاب نشده"
+   541→        description="یک پروژه را از نوار کناری انتخاب کنید تا ریزمتره‌ی آن نمایش داده شود."
+   542→      />
+   543→    );
+   544→  }
+   545→
+   546→  if (isLoading) {
+   547→    return <DetailBoqSkeleton />;
+   548→  }
+   549→
+   550→  if (isError) {
+   551→    return (
+   552→      <EmptyState
+   553→        icon={<RefreshCw className="size-8" />}
+   554→        title="خطا در بارگذاری"
+   555→        description="بارگذاری پروژه ناموفق بود."
+   556→        action={
+   557→          <Button variant="outline" className="h-9" onClick={() => refetch()}>
+   558→            <RefreshCw className="size-4" />
+   559→            تلاش مجدد
+   560→          </Button>
+   561→        }
+   562→      />
+   563→    );
+   564→  }
+   565→
+   566→  return (
+   567→    <div className="space-y-4 p-4 md:p-6">
+   568→      {/* Header */}
+   569→      <div className="flex flex-wrap items-end justify-between gap-3">
+   570→        <div>
+   571→          <h2 className="flex items-center gap-2 text-xl font-bold tracking-tight">
+   572→            <ListChecks className="size-5 text-amber-600" />
+   573→            ریزمتره
+   574→          </h2>
+   575→          <p className="mt-1 text-xs text-muted-foreground">
+   576→            پروژه: <span className="font-medium text-foreground">{data?.project.name}</span>
+   577→            {data?.project.priceList && (
+   578→              <>
+   579→                {" — فهرست بها: "}
+   580→                <span className="font-medium text-foreground">
+   581→                  {data.project.priceList.title} ({toFa(data.project.priceList.year)})
+   582→                </span>
+   583→              </>
+   584→            )}
+   585→          </p>
+   586→        </div>
+   587→        <div className="flex items-center gap-2">
+   588→          <Button
+   589→            variant="outline"
+   590→            size="sm"
+   591→            className="h-9"
+   592→            onClick={() => refetch()}
+   593→            disabled={isFetching}
+   594→          >
+   595→            <RefreshCw className={cn("size-4", isFetching && "animate-spin")} />
+   596→            بازخوانی
+   597→          </Button>
+   598→          <RowFormDialog
+   599→            projectId={projectId}
+   600→            priceListId={priceListId}
+   601→            priceListItems={priceListItems}
+   602→            editing={null}
+   603→            onSaved={(c) => toastCascade(c, "ردیف جدید اضافه شد")}
+   604→          />
+   605→        </div>
+   606→      </div>
+   607→
+   608→      {/* Cascade info banner */}
+   609→      {items.length > 0 && (
+   610→        <Alert className="border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+   611→          <Database className="size-4" />
+   612→          <AlertTitle className="text-sm">زنجیره‌ی محاسباتی فعال</AlertTitle>
+   613→          <AlertDescription className="text-xs">
+   614→            هر تغییر در ریزمتره، به‌صورت خودکار خلاصه‌متره، برگه مالی و فصول را بازمحاسبه می‌کند.
+   615→            {priceListId ? (
+   616→              <> فهرست به‌ی مرتبط با {toFa(priceListItems.length)} آیتم بارگذاری شد.</>
+   617→            ) : (
+   618→              <span className="font-medium"> هیچ فهرست بهایی به این پروژه متصل نیست.</span>
+   619→            )}
+   620→          </AlertDescription>
+   621→        </Alert>
+   622→      )}
+   623→
+   624→      {/* Table */}
+   625→      {items.length === 0 ? (
+   626→        <EmptyState
+   627→          icon={<ListChecks className="size-8" />}
+   628→          title="هنوز ردیفی ثبت نشده"
+   629→          description="برای شروع، اولین ردیف ریزمتره را اضافه کنید."
+   630→          action={
+   631→            <RowFormDialog
+   632→              projectId={projectId}
+   633→              priceListId={priceListId}
+   634→              priceListItems={priceListItems}
+   635→              editing={null}
+   636→              onSaved={(c) => toastCascade(c, "ردیف جدید اضافه شد")}
+   637→            />
+   638→          }
+   639→        />
+   640→      ) : (
+   641→        <Card className="overflow-hidden">
+   642→          <CardContent className="p-0">
+   643→            <div className="max-h-[70vh] overflow-y-auto">
+   644→              <Table className="boq-table">
+   645→                <TableHeader className="sticky top-0 z-10 bg-muted/60 backdrop-blur">
+   646→                  <TableRow className="border-b hover:bg-transparent">
+   647→                    <TableHead className="h-10 w-14 bg-muted/60 px-3 text-center font-medium">#</TableHead>
+   648→                    <TableHead className="h-10 bg-muted/60 px-3 font-medium">کد</TableHead>
+   649→                    <TableHead className="h-10 bg-muted/60 px-3 font-medium">شرح</TableHead>
+   650→                    <TableHead className="h-10 w-32 bg-muted/60 px-3 font-medium">واحد</TableHead>
+   651→                    <TableHead className="h-10 w-40 bg-muted/60 px-3 text-left font-medium">مقدار</TableHead>
+   652→                    <TableHead className="h-10 w-28 bg-muted/60 px-3 text-center font-medium">عملیات</TableHead>
+   653→                  </TableRow>
+   654→                </TableHeader>
+   655→                <TableBody>
+   656→                  {items.map((item, idx) => (
+   657→                    <TableRow
+   658→                      key={item.id}
+   659→                      className="hover:bg-muted/30"
+   660→                    >
+   661→                      <TableCell className="px-3 text-center text-xs text-muted-foreground">
+   662→                        {toFa(idx + 1)}
+   663→                      </TableCell>
+   664→                      <TableCell className="px-3">
+   665→                        <div className="flex items-center gap-2">
+   666→                          <Badge variant="outline" className="font-mono text-[11px]">
+   667→                            {item.code}
+   668→                          </Badge>
+   669→                          {item.priceListItem && (
+   670→                            <span
+   671→                              title="متصل به فهرست بها"
+   672→                              className="inline-block size-1.5 rounded-full bg-emerald-500"
+   673→                            />
+   674→                          )}
+   675→                        </div>
+   676→                      </TableCell>
+   677→                      <TableCell className="max-w-[40vw] px-3">
+   678→                        <div className="truncate text-sm" title={item.description}>
+   679→                          {item.description}
+   680→                        </div>
+   681→                      </TableCell>
+   682→                      <TableCell className="px-3 text-xs text-muted-foreground">
+   683→                        {item.unit}
+   684→                      </TableCell>
+   685→                      <TableCell className="px-3 text-left">
+   686→                        <QuantityCell
+   687→                          item={item}
+   688→                          onCommit={(itemId, qty) =>
+   689→                            updateMutation.mutate({ itemId, quantity: qty })
+   690→                          }
+   691→                        />
+   692→                      </TableCell>
+   693→                      <TableCell className="px-3">
+   694→                        <div className="flex items-center justify-center gap-1">
+   695→                          <RowFormDialog
+   696→                            projectId={projectId}
+   697→                            priceListId={priceListId}
+   698→                            priceListItems={priceListItems}
+   699→                            editing={item}
+   700→                            onSaved={(c) => toastCascade(c, "ردیف ویرایش شد")}
+   701→                          />
+   702→                          <Button
+   703→                            variant="ghost"
+   704→                            size="icon"
+   705→                            className="size-9 text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:hover:bg-rose-950/40"
+   706→                            aria-label="حذف"
+   707→                            disabled={deleteMutation.isPending}
+   708→                            onClick={() => {
+   709→                              if (confirm(`حذف ردیف «${item.description}»؟`)) {
+   710→                                deleteMutation.mutate(item.id);
+   711→                              }
+   712→                            }}
+   713→                          >
+   714→                            <Trash2 className="size-4" />
+   715→                          </Button>
+   716→                        </div>
+   717→                      </TableCell>
+   718→                    </TableRow>
+   719→                  ))}
+   720→                </TableBody>
+   721→              </Table>
+   722→            </div>
+   723→
+   724→            {/* Footer summary */}
+   725→            <div className="flex items-center justify-between gap-3 border-t bg-muted/40 px-4 py-2.5 text-xs">
+   726→              <span className="text-muted-foreground">
+   727→                مجموع ردیف‌ها: <b className="text-foreground">{toFa(items.length)}</b>
+   728→              </span>
+   729→              <span className="text-muted-foreground">
+   730→                مجموع مقدار:{" "}
+   731→                <b className="text-foreground tabular-nums">
+   732→                  {faNum(items.reduce((s, i) => s + (i.quantity || 0), 0), 2)}
+   733→                </b>
+   734→              </span>
+   735→            </div>
+   736→          </CardContent>
+   737→        </Card>
+   738→      )}
+   739→    </div>
+   740→  );
+   741→}
+   742→
+   743→// ─── Skeleton ────────────────────────────────────────────────────────
+   744→function DetailBoqSkeleton() {
+   745→  return (
+   746→    <div className="space-y-4 p-4 md:p-6">
+   747→      <div className="flex items-center justify-between">
+   748→        <Skeleton className="h-8 w-48" />
+   749→        <Skeleton className="h-9 w-32" />
+   750→      </div>
+   751→      <Skeleton className="h-16 w-full" />
+   752→      <Card>
+   753→        <CardContent className="p-0">
+   754→          <div className="max-h-[70vh] overflow-hidden">
+   755→            <Table>
+   756→              <TableHeader>
+   757→                <TableRow className="hover:bg-transparent">
+   758→                  {Array.from({ length: 6 }).map((_, i) => (
+   759→                    <TableHead key={i} className="bg-muted/40">
+   760→                      <Skeleton className="h-4 w-12" />
+   761→                    </TableHead>
+   762→                  ))}
+   763→                </TableRow>
+   764→              </TableHeader>
+   765→              <TableBody>
+   766→                {Array.from({ length: 8 }).map((_, r) => (
+   767→                  <TableRow key={r}>
+   768→                    {Array.from({ length: 6 }).map((_, c) => (
+   769→                      <TableCell key={c}>
+   770→                        <Skeleton className="h-6 w-full" />
+   771→                      </TableCell>
+   772→                    ))}
+   773→                  </TableRow>
+   774→                ))}
+   775→              </TableBody>
+   776→            </Table>
+   777→          </div>
+   778→        </CardContent>
+   779→      </Card>
+   780→    </div>
+   781→  );
+   782→}
+   783→
+   784→// ─── Empty State ─────────────────────────────────────────────────────
+   785→function EmptyState({
+   786→  icon,
+   787→  title,
+   788→  description,
+   789→  action,
+   790→}: {
+   791→  icon: React.ReactNode;
+   792→  title: string;
+   793→  description: string;
+   794→  action?: React.ReactNode;
+   795→}) {
+   796→  return (
+   797→    <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 p-6 text-center">
+   798→      <div className="flex size-16 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+   799→        {icon}
+   800→      </div>
+   801→      <h3 className="text-lg font-semibold">{title}</h3>
+   802→      <p className="max-w-md text-sm text-muted-foreground">{description}</p>
+   803→      {action}
+   804→    </div>
+   805→  );
+   806→}
+   807→
+   808→export default DetailBoqView;
+   809→

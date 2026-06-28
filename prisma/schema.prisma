@@ -1,0 +1,2977 @@
+// Prisma schema برای پلتفرم متره و برآورد (جایگزین وب تکسا)
+// طراحی چندمستاجره با ضرایب زنجیره‌ای
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۱: چندمستاجرتی و احراز هویت
+// ═══════════════════════════════════════════════════════════
+
+model Tenant {
+  id            String   @id @default(cuid())
+  name          String
+  logoUrl       String?
+  letterheadUrl String?
+  signatures    String   @default("[]")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  users         User[]
+  projects      Project[]
+  organizations Organization[]
+}
+
+enum UserRole {
+  ADMIN
+  ESTIMATOR
+  BILLER
+}
+
+model User {
+  id             String   @id @default(cuid())
+  tenantId       String
+  organizationId String?
+  email          String   @unique
+  name           String
+  mobile         String?
+  role           String   @default("ESTIMATOR")
+  passwordHash   String?
+  isActive       Boolean  @default(true)
+  avatarUrl      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organization   Organization?  @relation(fields: [organizationId], references: [id])
+
+  @@index([tenantId])
+  @@index([organizationId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  سازمان‌ها و طرفین پروژه
+// ═══════════════════════════════════════════════════════════
+
+model Organization {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  nationalId  String?
+  type        String   // EMPLOYER | CONSULTANT | CONTRACTOR | INTERNAL
+  logoUrl     String?
+  address     String?
+  phone       String?
+  createdAt   DateTime @default(now())
+
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  users       User[]
+  projectParties ProjectParty[]
+
+  @@index([tenantId])
+}
+
+model ProjectParty {
+  id             String   @id @default(cuid())
+  projectId      String
+  organizationId String
+  partyType      String   // EMPLOYER | CONSULTANT | CONTRACTOR
+  displayTitle   String
+  isPrimary      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+
+  members        ProjectMember[]
+  lettersFrom    Letter[]      @relation("LetterFrom")
+  lettersTo      Letter[]      @relation("LetterTo")
+
+  @@index([projectId])
+  @@index([organizationId])
+}
+
+model ProjectMember {
+  id              String   @id @default(cuid())
+  projectId       String
+  userId          String
+  projectPartyId  String
+  role            String   // ORG_OWNER | PROJECT_MANAGER | RESIDENT_ENGINEER | QUANTITY_SURVEYOR | etc.
+  canSign         Boolean  @default(false)
+  canApprove      Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  project         Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectParty    ProjectParty @relation(fields: [projectPartyId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([projectId])
+  @@index([userId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۲: داده‌های پایه مرجع (Reference Data)
+// ═══════════════════════════════════════════════════════════
+
+model PriceList {
+  id        String   @id @default(cuid())
+  year      Int      // سال شمسی: 1403, 1404, ...
+  discipline String  // ابنیه | راه و باند | نفت و گاز | ژئوتکنیک | ...
+  title     String
+  createdAt DateTime @default(now())
+
+  items     PriceListItem[]
+  projects  Project[]
+
+  @@unique([year, discipline])
+}
+
+model PriceListItem {
+  id           String   @id @default(cuid())
+  priceListId  String
+  code         String   // کد فهرست بها
+  title        String
+  unit         String   // مترمربع | مترمکعب | تن | ...
+  unitPrice    Float
+  createdAt    DateTime @default(now())
+
+  priceList    PriceList @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+  detailBoqs   DetailBoq[]
+
+  @@index([priceListId])
+  @@index([code])
+}
+
+model IndexRecord {
+  id         String   @id @default(cuid())
+  year       Int
+  season     String   // بهار | تابستان | پاییز | زمستان
+  discipline String   // رشته‌ای یا "کلی"
+  value      Float    // شاخص
+  createdAt  DateTime @default(now())
+
+  @@unique([year, season, discipline])
+}
+
+model Coefficient {
+  id         String   @id @default(cuid())
+  year       Int
+  discipline String
+  type       String   // REGIONAL | BASE | ALTITUDE | FLOOR | TUNNEL
+  value      Float
+  createdAt  DateTime @default(now())
+
+  @@unique([year, discipline, type])
+}
+
+model CityDistance {
+  id       String @id @default(cuid())
+  fromCity String
+  toCity   String
+  km       Float
+
+  @@unique([fromCity, toCity])
+  @@index([fromCity])
+}
+
+model MaterialRate {
+  id          String   @id @default(cuid())
+  material    String   // فولاد | سیمان | ...
+  source      String   // NET | STATS | DAILY
+  year        Int
+  rate        Float
+  wasteFactor Float    @default(1.0) // ضریب پرت، مثلاً 1.06 برای سیمان
+  createdAt   DateTime @default(now())
+
+  @@unique([material, source, year])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۳: پروژه و ورک‌فلو
+// ═══════════════════════════════════════════════════════════
+
+model Project {
+  id              String   @id @default(cuid())
+  tenantId        String
+  name            String
+  code            String
+  documentCode    String?
+  year            Int
+  priceListId     String?
+  contractAmount  Float    @default(0)
+  contractDate    DateTime?
+  contractNo      String?
+  startDate       DateTime?
+  durationDays    Int      @default(0)
+  priceListYear   Int?
+  discipline      String?
+  status          String   @default("DRAFT")
+  location        String?
+  latitude        Float?
+  longitude       Float?
+  description     String?
+  texsaImportId   String?
+  coefficients    String   @default("{}")
+  cachedTotal     Float    @default(0)
+  cachedExecuted  Float    @default(0)
+  assignedUserIds String   @default("[]")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  priceList       PriceList? @relation(fields: [priceListId], references: [id])
+  detailBoqs      DetailBoq[]
+  summaryBoqs     SummaryBoq[]
+  financialSheet  FinancialSheetItem[]
+  chapters        Chapter[]
+  payments        Payment[]
+  modules         ProjectModule[]
+  alerts          Alert[]
+  comments        Comment[]
+  materialsAtSite MaterialAtSite[]
+  bidRanges       BidRange[]
+  auditLogs       AuditLog[]
+  documents       DocumentFile[]
+  adjustmentRows  AdjustmentReportRow[]
+  risks           Risk[]
+  supplierOrders  SupplierOrder[]
+  changeOrders    ChangeOrder[]
+  calendarEvents  CalendarEvent[]
+  contracts       Contract[]
+  parties         ProjectParty[]
+  members         ProjectMember[]
+  channels        ProjectChannel[]
+  letters         Letter[]
+  workflowInstances WorkflowInstance[]
+
+  @@index([tenantId])
+}
+
+// ─── مرحله ۲: ریزمتره ───
+model DetailBoq {
+  id              String   @id @default(cuid())
+  projectId       String
+  priceListItemId String?
+  code            String   // کد فهرست بها
+  description     String
+  unit            String
+  quantity        Float    @default(0)
+  // پشت‌سری (Dimension Calculator)
+  dimensionFormulaId String?
+  dimensionParams String   @default("{}") // پارامترهای پشت‌سری
+  dimensionShape  String?  // RECTANGLE | CIRCLE | TRAPEZOID | ...
+  // قفل هم‌زمانی
+  lockedBy        String?
+  lockedAt        DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project         Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  priceListItem   PriceListItem? @relation(fields: [priceListItemId], references: [id])
+
+  @@index([projectId])
+  @@index([code])
+}
+
+// ─── مرحله ۲: خلاصه متره (تجمیع ریزمتره) ───
+model SummaryBoq {
+  id              String   @id @default(cuid())
+  projectId       String
+  priceListItemId String?
+  code            String
+  description     String
+  unit            String
+  totalQuantity   Float    @default(0) // مجموع از ریزمتره
+  updatedAt       DateTime @updatedAt
+
+  project         Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, code])
+  @@index([projectId])
+}
+
+// ─── مرحله ۳: برگه مالی ───
+model FinancialSheetItem {
+  id            String   @id @default(cuid())
+  projectId     String
+  summaryBoqId  String?
+  code          String
+  description   String
+  unit          String
+  quantity      Float    @default(0)
+  unitPrice     Float    @default(0) // قیمت واحد (آیتم ستاره‌دار = قیمت جدید)
+  isStarred     Boolean  @default(false) // آیتم ستاره‌دار
+  relatedCode   String?  // کد مرتبط (بخشنامه ۴۹۵۱)
+  reference     String   @default("NET") // NET | STATS | DAILY
+  totalAmount   Float    @default(0) // quantity × unitPrice
+  // آنالیز بها (۴ عامل) به‌صورت JSON
+  analysis      String   @default("{}")
+  chapterNo     Int      @default(1) // فصل مربوطه
+  updatedAt     DateTime @updatedAt
+
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  paymentItems  PaymentItem[]
+
+  @@index([projectId])
+  @@index([code])
+}
+
+// ─── مرحله ۳: فصول ───
+model Chapter {
+  id              String   @id @default(cuid())
+  projectId       String
+  chapterNo       Int
+  title           String
+  amount          Float    @default(0)
+  isWorkshopSetup Boolean  @default(false) // تجهیز کارگاه
+  workshopMode    String?  // حالت تجهیز کارگاه
+  percent         Float    @default(0) // درصد از کل
+  updatedAt       DateTime @updatedAt
+
+  project         Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, chapterNo])
+  @@index([projectId])
+}
+
+// ─── مرحله ۴: صورت‌وضعیت ───
+model Payment {
+  id              String   @id @default(cuid())
+  projectId       String
+  periodNo        Int      // شماره دوره
+  // گردش کار سخت‌گیرانه نقش‌ها:
+  // DRAFT → SUBMITTED (ارسال پیمانکار) → CONSULTANT_APPROVED (تأیید مشاور) → FINALIZED (قطعی کارفرما)
+  //                    ↓ REJECTED (رد مشاور → بازگشت به پیمانکار)
+  // FINALIZED → REOPENED (فقط کارفرما، برای اصلاح)
+  status          String   @default("DRAFT")
+  // اطلاعات هر مرحله از گردش کار
+  submittedBy     String?
+  submittedAt     DateTime?
+  consultantApprovedBy String?
+  consultantApprovedAt DateTime?
+  finalizedBy     String?
+  finalizedAt     DateTime?
+  rejectedBy      String?
+  rejectedAt      DateTime?
+  rejectReason    String?
+  // قفل هم‌زمانی (Row-Level Locking)
+  lockedBy        String?
+  lockedAt        DateTime?
+  // تاریخچه‌ی گردش کار (JSON)
+  stateHistory    String   @default("[]")
+  // کسورات قانونی (درصد)
+  guaranteePct    Float    @default(5.0)  // تضمین
+  insurancePct    Float    @default(2.0)  // بیمه
+  taxPct          Float    @default(5.0)  // مالیات
+  // مبالغ محاسبه‌شده (فقط در صورت‌وضعیت اصلی — بدون تعدیل)
+  executedAmount  Float    @default(0)
+  guarantee       Float    @default(0)
+  insurance       Float    @default(0)
+  tax             Float    @default(0)
+  netPayable      Float    @default(0)
+  // موعد ارسال
+  dueDate         DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project         Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  items           PaymentItem[]
+
+  @@unique([projectId, periodNo])
+  @@index([projectId])
+}
+
+model PaymentItem {
+  id                 String   @id @default(cuid())
+  paymentId          String
+  financialSheetId   String?
+  code               String
+  description        String
+  unit               String
+  totalQuantity      Float    @default(0)
+  executedQuantity   Float    @default(0)
+  executedPercent    Float    @default(0)
+  unitPrice          Float    @default(0)
+  executedAmount     Float    @default(0)
+  adjustedAmount     Float    @default(0) // بعد از تعدیل
+  isAdjusted         Boolean  @default(false)
+
+  payment            Payment             @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  financialSheet     FinancialSheetItem? @relation(fields: [financialSheetId], references: [id])
+
+  @@index([paymentId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۵: ماژول‌های اختیاری پروژه (Modular Activation)
+// ═══════════════════════════════════════════════════════════
+
+model ProjectModule {
+  id          String   @id @default(cuid())
+  projectId   String
+  moduleKey   String   // BID_PRICE | REVERSE_ADJUST | MATERIAL_SITE | etc.
+  isEnabled   Boolean  @default(true)
+  updatedAt   DateTime @updatedAt
+
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, moduleKey])
+  @@index([projectId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۶: سیستم هشدارهای هوشمند (Alert Engine)
+// ═══════════════════════════════════════════════════════════
+
+model Alert {
+  id           String    @id @default(cuid())
+  tenantId     String
+  projectId    String?
+  type         String    // GUARANTEE | DEDUCTION | SCHEDULE | CALC | WORKFLOW | SYSTEM
+  severity     String    @default("INFO") // INFO | WARNING | CRITICAL
+  title        String
+  message      String
+  relatedId    String?
+  relatedType  String?   // PAYMENT | FINANCIAL_SHEET | DETAIL_BOQ | PROJECT
+  dueDate      DateTime?
+  isRead       Boolean   @default(false)
+  isResolved   Boolean   @default(false)
+  resolvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  project      Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([projectId])
+  @@index([isRead])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۷: سیستم ارتباط داخلی و کامنت‌گذاری (Collaboration)
+// ═══════════════════════════════════════════════════════════
+
+model ChatThread {
+  id          String   @id @default(cuid())
+  tenantId    String
+  // مشارکت‌کنندگان به‌صورت JSON: ["user-1","user-2"]
+  participants String  @default("[]")
+  lastMessageAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  messages    ChatMessage[]
+
+  @@index([tenantId])
+}
+
+model ChatMessage {
+  id          String   @id @default(cuid())
+  threadId    String
+  senderId    String
+  content     String
+  // خوانده‌شده توسط: JSON ["user-1","user-2"]
+  readBy      String   @default("[]")
+  createdAt   DateTime @default(now())
+
+  thread      ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@index([threadId])
+  @@index([senderId])
+}
+
+model Comment {
+  id             String   @id @default(cuid())
+  tenantId       String
+  projectId      String
+  userId         String
+  userName       String
+  // نوع موجودیت کامنت‌گذاری‌شده
+  entityType     String   // DETAIL_BOQ | FINANCIAL_SHEET | PAYMENT | CHAPTER | PROJECT
+  entityId       String   // شناسه‌ی ردیف/سند
+  entityLabel    String?  // برچسب نمایشی (مثلاً "ردیف ۱۲۴ - کد 010101")
+  parentCommentId String?
+  content        String
+  // mentions: JSON ["user-1","user-2"]
+  mentions       String   @default("[]")
+  resolved       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([entityType, entityId])
+  @@index([userId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۸: مصالح پای کار و دامنه قیمت پیشنهادی
+// ═══════════════════════════════════════════════════════════
+
+model MaterialAtSite {
+  id                 String   @id @default(cuid())
+  projectId          String
+  financialSheetId   String?
+  code               String
+  description        String
+  unit               String
+  // مقدار خریداری‌شده و تحویل‌شده در پای کار
+  purchasedQuantity  Float    @default(0)
+  // مقدار اجرا‌شده در صورت‌وضعیت‌های قبلی
+  previousExecuted   Float    @default(0)
+  // مقدار اجرا‌شده در دوره‌ی جاری
+  currentExecuted    Float    @default(0)
+  // مقدار باقی‌مانده در پای کار (محاسبه)
+  remainingQuantity  Float    @default(0)
+  // اطلاعات فاکتور
+  invoiceNo          String?
+  supplier           String?
+  purchaseDate       DateTime?
+  unitPrice          Float    @default(0)
+  totalCost          Float    @default(0)
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  project            Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([code])
+}
+
+model BidRange {
+  id              String   @id @default(cuid())
+  projectId       String
+  // درصدهای ورودی کاربر
+  overheadPct     Float    @default(15.0) // بالاسری
+  profitPct       Float    @default(8.0)  // سود پیمانکار
+  riskPct         Float    @default(5.0)  // ضریب ریسک
+  // مبلغ پایه (از محاسبات برگه مالی)
+  baseAmount      Float    @default(0)
+  // کف و سقف قیمت پیشنهادی (محاسبه)
+  floorAmount     Float    @default(0)
+  ceilingAmount   Float    @default(0)
+  suggestedAmount Float    @default(0) // پیشنهاد بهینه
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۹: ثبت رویدادها (Audit Log)
+// ═══════════════════════════════════════════════════════════
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  tenantId    String
+  projectId   String?
+  userId      String?
+  userName    String?
+  action      String   // CREATE | UPDATE | DELETE | SUBMIT | APPROVE | REJECT
+  entityType  String   // PROJECT | PAYMENT | FINANCIAL_SHEET | DETAIL_BOQ | etc.
+  entityId    String?
+  // قبل/بعد به‌صورت JSON
+  before      String?
+  after       String?
+  ipAddr      String?
+  createdAt   DateTime @default(now())
+
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([projectId])
+  @@index([entityType, entityId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۱۰: موتور پشت‌سری (Dimension Calculator)
+// ═══════════════════════════════════════════════════════════
+
+model DimensionFormula {
+  id            String   @id @default(cuid())
+  tenantId      String
+  projectId     String?
+  name          String   // نام قالب، مثلاً "حفاريه با عرض ۲ متر"
+  // نوع هندسی
+  shape         String   // RECTANGLE | CIRCLE | TRAPEZOID | TRIANGLE | POLYGON | COUNT_ONLY
+  // پارامترها به‌صورت JSON: { length: 0, width: 0, height: 0, count: 1, slope: 0 }
+  params        String   @default("{}")
+  // فرمول محاسبه به‌صورت رشته (نمایشی)
+  formulaDisplay String  @default("")
+  // نتیجه‌ی نمونه (ذخیره‌ی آخرین محاسبه)
+  lastResult    Float    @default(0)
+  unit          String   @default("مترمکعب")
+  isReusable    Boolean  @default(true) // قابل استفاده در ردیف‌های دیگر
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([projectId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۱۱: سیستم مستندسازی هوشمند (Smart Document Manager)
+// ═══════════════════════════════════════════════════════════
+
+model DocumentFile {
+  id            String   @id @default(cuid())
+  tenantId      String
+  projectId     String
+  // نوع موجودیت متصل
+  entityType    String   // DETAIL_BOQ | FINANCIAL_SHEET | PAYMENT | PROJECT | CHAPTER
+  entityId      String
+  // فایل
+  originalName  String   // نام اصلی فایل آپلودشده
+  storedName    String   // نام ذخیره‌شده در سرور (هوشمند)
+  mimeType      String
+  sizeBytes     Int      @default(0)
+  // اطلاعات هوشمند برای نام‌گذاری
+  projectCode   String   // کد پروژه (در زمان آپلود)
+  paymentPeriod Int?     // شماره دوره صورت‌وضعیت (در صورت وجود)
+  itemCode      String?  // کد آیتم فهرست بها
+  uploadDate    String   // تاریخ شمسی آپلود
+  description   String?  // توضیحات کاربر
+  // دسته‌بندی
+  category      String   @default("OTHER") // SITE_PHOTO | MEETING_MINUTES | DRAWING | INVOICE | CONTRACT | OTHER
+  // آپلودکننده
+  uploadedById  String?
+  uploadedByName String?
+  // نسخه‌گذاری
+  version       Int      @default(1)
+  parentDocId   String?  // اگر نسخه‌ی جدید، به مستند اصلی اشاره می‌کند
+  isLatest      Boolean  @default(true)
+  // برچسب‌ها
+  tags          String   @default("[]") // JSON array
+  // ستاره‌دار (محبوب)
+  isStarred     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([entityType, entityId])
+  @@index([category])
+  @@index([parentDocId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۱۲: ردیف‌های گزارش تعدیل تفکیک‌شده (Adjustment Report Rows)
+// ═══════════════════════════════════════════════════════════
+
+model AdjustmentReportRow {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  projectId          String
+  paymentId          String?  // صورت‌وضعیت مرتبط
+  periodLabel        String   // "دوره ۱" یا "فروردین ۱۴۰۴" یا "سه‌ماهه دوم ۱۴۰۴"
+  chapterNo          Int      // فصل
+  workPeriodAmount   Float    @default(0) // مبلغ کارکرد دوره
+  durationRatio      Float    @default(1.0) // نسبت مدت کارکرد
+  baseIndex          Float    @default(0) // شاخص مبنا
+  currentIndex       Float    @default(0) // شاخص کارکرد
+  adjustmentFactor   Float    @default(1.0) // ضریب تعدیل
+  previousAmount     Float    @default(0) // مبلغ صورت‌وضعیت قبلی
+  currentAmount      Float    @default(0) // مبلغ صورت‌وضعیت فعلی
+  diffAmount         Float    @default(0) // مابه‌التفاوت
+  adjustmentAmount   Float    @default(0) // مبلغ تعدیل
+  // نوع تعدیل: TEMPORARY (موقت) | FINAL (قطعی) | REVERSE (معکوس)
+  adjustmentType     String   @default("TEMPORARY")
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  project            Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([paymentId])
+  @@index([adjustmentType])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۱۳: مدیریت ریسک (Risk Management)
+// ═══════════════════════════════════════════════════════════
+
+model Risk {
+  id          String   @id @default(cuid())
+  tenantId    String
+  projectId   String
+  title       String
+  description String?
+  // طبقه‌بندی
+  category    String   // FINANCIAL | SCHEDULE | TECHNICAL | CONTRACTUAL | ENVIRONMENTAL | SAFETY
+  probability Float    @default(0.5) // 0 تا 1
+  impact      Float    @default(0.5) // 0 تا 1
+  riskScore   Float    @default(0.25) // probability × impact
+  severity    String   @default("MEDIUM") // LOW | MEDIUM | HIGH | CRITICAL
+  status      String   @default("IDENTIFIED") // IDENTIFIED | ANALYZED | MITIGATING | MONITORING | CLOSED
+  // پاسخ به ریسک
+  response    String?  // AVOID | TRANSFER | MITIGATE | ACCEPT
+  mitigation  String?  // اقدامات کاهش
+  contingency String?  // طرح بی‌انبوه
+  owner       String?  // مسئول ریسک
+  dueDate     DateTime?
+  // تأثیر مالی
+  estimatedCost Float  @default(0) // هزینه‌ی تخمینی رخداد
+  // تاریخچه
+  identifiedAt DateTime @default(now())
+  closedAt    DateTime?
+
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([severity])
+  @@index([status])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۱۴: مدیریت تأمین‌کنندگان (Supplier Management)
+// ═══════════════════════════════════════════════════════════
+
+model Supplier {
+  id            String   @id @default(cuid())
+  tenantId      String
+  name          String
+  category      String   // MATERIAL | EQUIPMENT | LABOR | SERVICE
+  contactPerson String?
+  phone         String?
+  email         String?
+  address       String?
+  taxId         String?  // شناسه ملی / کد اقتصادی
+  // ارزیابی
+  rating        Float    @default(0) // 0 تا 5
+  totalOrders   Int      @default(0)
+  totalValue    Float    @default(0)
+  onTimeRate    Float    @default(0) // درصد تحویل به‌موقع
+  qualityScore  Float    @default(0) // 0 تا 100
+  // وضعیت
+  isActive      Boolean  @default(true)
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  orders        SupplierOrder[]
+
+  @@index([tenantId])
+  @@index([category])
+}
+
+model SupplierOrder {
+  id            String   @id @default(cuid())
+  tenantId      String
+  projectId     String
+  supplierId    String
+  // اطلاعات سفارش
+  orderNo       String
+  orderDate     DateTime @default(now())
+  deliveryDate  DateTime?
+  receivedDate  DateTime?
+  // محتوا
+  description   String
+  quantity      Float    @default(0)
+  unit          String
+  unitPrice     Float    @default(0)
+  totalAmount   Float    @default(0)
+  // وضعیت
+  status        String   @default("PENDING") // PENDING | ORDERED | DELIVERED | RECEIVED | CANCELLED
+  // ارزیابی تحویل
+  deliveryRating Float   @default(0) // 0 تا 5
+  qualityRating  Float   @default(0) // 0 تا 5
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  supplier      Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([supplierId])
+  @@index([status])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۱۵: مدیریت تغییرات (Change Order Management)
+// ═══════════════════════════════════════════════════════════
+
+model ChangeOrder {
+  id            String   @id @default(cuid())
+  tenantId      String
+  projectId     String
+  changeNo      String   // شماره تغییر
+  title         String
+  description   String
+  // نوع تغییر
+  type          String   // SCOPE | DESIGN | SCHEDULE | COST | MATERIAL | OTHER
+  priority      String   @default("MEDIUM") // LOW | MEDIUM | HIGH | URGENT
+  // تأثیر
+  costImpact    Float    @default(0) // تأثیر مالی (مثبت=افزایش، منفی=کاهش)
+  scheduleImpact Int     @default(0) // تأثیر زمانی به روز
+  // گردش کار
+  status        String   @default("SUBMITTED") // SUBMITTED | UNDER_REVIEW | APPROVED | REJECTED | IMPLEMENTED
+  requestedBy   String
+  requestedByName String
+  reviewedBy    String?
+  reviewedByName String?
+  reviewNote    String?
+  // تاریخ‌ها
+  submittedAt   DateTime @default(now())
+  reviewedAt    DateTime?
+  implementedAt DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([status])
+  @@index([type])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۱۶: رویدادهای تقویمی (Calendar Events)
+// ═══════════════════════════════════════════════════════════
+
+model CalendarEvent {
+  id            String   @id @default(cuid())
+  tenantId      String
+  projectId     String?
+  title         String
+  description   String?
+  // نوع رویداد
+  type          String   // DEADLINE | MEETING | INSPECTION | DELIVERY | PAYMENT | MILESTONE | OTHER
+  // زمان
+  startDate     DateTime
+  endDate       DateTime?
+  allDay        Boolean  @default(true)
+  // محل
+  location      String?
+  // شرکت‌کنندگان (JSON array of names)
+  attendees     String   @default("[]")
+  // وضعیت
+  status        String   @default("SCHEDULED") // SCHEDULED | COMPLETED | CANCELLED | POSTPONED
+  // رنگ سفارشی
+  color         String   @default("amber")
+  createdAt     DateTime @default(now())
+
+  project       Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([projectId])
+  @@index([startDate])
+  @@index([type])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۱۷: مدیریت قراردادها (Contract Management)
+// ═══════════════════════════════════════════════════════════
+
+model Contract {
+  id            String   @id @default(cuid())
+  tenantId      String
+  projectId     String
+  contractNo    String   // شماره قرارداد
+  title         String
+  type          String   // MAIN | SUBCONTRACT | SUPPLY | SERVICE | CONSULTANCY
+  // طرف قرارداد
+  partyName     String   // نام طرف مقابل
+  partyRole     String   // EMPLOYER | CONTRACTOR | CONSULTANT | SUPPLIER
+  // مبالغ
+  contractAmount Float   @default(0)
+  advancePayment Float   @default(0) // پیش‌پرداخت
+  retentionPct  Float    @default(5) // درصد سپرده حسن انجام کار
+  // زمان‌بندی
+  signDate      DateTime?
+  startDate     DateTime?
+  endDate       DateTime?
+  durationDays  Int      @default(0)
+  // وضعیت
+  status        String   @default("DRAFT") // DRAFT | SIGNED | ACTIVE | COMPLETED | TERMINATED
+  // فایل
+  documentUrl   String?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  milestones    ContractMilestone[]
+
+  @@index([projectId])
+  @@index([status])
+  @@index([type])
+}
+
+model ContractMilestone {
+  id            String   @id @default(cuid())
+  contractId    String
+  title         String
+  description   String?
+  dueDate       DateTime
+  completedDate DateTime?
+  amount        Float    @default(0)
+  status        String   @default("PENDING") // PENDING | COMPLETED | OVERDUE
+  order         Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  contract      Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([contractId])
+  @@index([status])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی Import/Export Metadata تکسا
+// ═══════════════════════════════════════════════════════════
+
+model TexsaImport {
+  id               String   @id @default(cuid())
+  originalFileName String
+  fileSizeBytes    Int
+  texsaVersion     String?
+  projectCode      String?
+  projectName      String?
+  status           String   @default("PENDING")
+  tableCountsJson  String   @default("{}")
+  warningsJson     String   @default("[]")
+  errorsJson       String   @default("[]")
+  totalRows        Int      @default(0)
+  totalTables      Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([status])
+}
+
+model TexsaImportIssue {
+  id        String   @id @default(cuid())
+  importId  String
+  severity  String
+  tableName String?
+  rowOrder  Int?
+  fieldName String?
+  message   String
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+
+  @@index([importId])
+  @@index([tableName])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی Mirror/Native تکسا — تمام جدول‌های تکسا به‌صورت String?
+//  تولید خودکار از texsa_schema_summary.json
+//  تمام فیلدهای XML با پیشوند tx_ برای جلوگیری از تداخل
+// ═══════════════════════════════════════════════════════════
+
+model BaseSituNoe {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_Id                                    String?  // Id
+  tx_StnCode                               String?  // StnCode
+  tx_StnName                               String?  // StnName
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("BaseSituNoe")
+  @@index([importId])
+}
+
+model Base_PersonalityTyp {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_pty_id                                String?  // pty_id
+  tx_pty_Name                              String?  // pty_Name
+  tx_pty_isSystem                          String?  // pty_isSystem
+  tx_PtyOrder                              String?  // PtyOrder
+  tx_ptyShow                               String?  // ptyShow
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("base_PersonalityTyp")
+  @@index([importId])
+}
+
+model BaseBarcode {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_Id                                    String?  // Id
+  tx_IsActive                              String?  // IsActive
+  tx_OrderBbc                              String?  // OrderBbc
+  tx_BbcCode                               String?  // BbcCode
+  tx_BbcName                               String?  // BbcName
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("BaseBarcode")
+  @@index([importId])
+}
+
+model Base_TajhzType {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_tjt_id                                String?  // tjt_id
+  tx_tjt_name                              String?  // tjt_name
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("base_TajhzType")
+  @@index([importId])
+}
+
+model Base_Months {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_mon_id                                String?  // mon_id
+  tx_mon_name                              String?  // mon_name
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("Base_Months")
+  @@index([importId])
+}
+
+model Base_ShakhesType {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_Sht_id                                String?  // Sht_id
+  tx_Sht_Name                              String?  // Sht_Name
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("base_ShakhesType")
+  @@index([importId])
+}
+
+model Base_ItemType {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_Ity_id                                String?  // Ity_id
+  tx_Ity_name                              String?  // Ity_name
+  tx_Ity_Code                              String?  // Ity_Code
+  tx_ity_Summ                              String?  // ity_Summ
+  tx_Ity_ShowInList                        String?  // Ity_ShowInList
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("Base_ItemType")
+  @@index([importId])
+}
+
+model Base_unit {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_unt_id                                String?  // unt_id
+  tx_unt_unit                              String?  // unt_unit
+  tx_unt_rad                               String?  // unt_rad
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("base_unit")
+  @@index([importId])
+}
+
+model Base_tyun {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_tyn_id                                String?  // tyn_id
+  tx_tyn_tyun                              String?  // tyn_tyun
+  tx_tyn_tyun_vb6                          String?  // tyn_tyun_vb6
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("base_tyun")
+  @@index([importId])
+}
+
+model Base_zrtj {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_zrt_id                                String?  // zrt_id
+  tx_zrt_rad                               String?  // zrt_rad
+  tx_zrt_zrpr                              String?  // zrt_zrpr
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("base_zrtj")
+  @@index([importId])
+}
+
+model Base_IntpVaziat {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_itv_id                                String?  // itv_id
+  tx_itv_Name                              String?  // itv_Name
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("base_IntpVaziat")
+  @@index([importId])
+}
+
+model Brv_color {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_col_name_far                          String?  // col_name_far
+  tx_col_rad                               String?  // col_rad
+  tx_col_name_eng                          String?  // col_name_eng
+  tx_col_red                               String?  // col_red
+  tx_col_green                             String?  // col_green
+  tx_col_blue                              String?  // col_blue
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_color")
+  @@index([importId])
+}
+
+model Base_acts_unit {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_acu_unit_id                           String?  // acu_unit_id
+  tx_acu_unit                              String?  // acu_unit
+  tx_acu_rad                               String?  // acu_rad
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("base_acts_unit")
+  @@index([importId])
+}
+
+model Brv_contract {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_ctc_id                                String?  // ctc_id
+  tx_ctc_project_type                      String?  // ctc_project_type
+  tx_ctc_archive                           String?  // ctc_archive
+  tx_ctc_copj                              String?  // ctc_copj
+  tx_ctc_rad                               String?  // ctc_rad
+  tx_ctc_nmpj                              String?  // ctc_nmpj
+  tx_ctc_yrfh                              String?  // ctc_yrfh
+  tx_ctc_parent                            String?  // ctc_parent
+  tx_ctc_nmcs                              String?  // ctc_nmcs
+  tx_ctc_nmct                              String?  // ctc_nmct
+  tx_ctc_nmci                              String?  // ctc_nmci
+  tx_ctc_Etebar_Omomi                      String?  // ctc_Etebar_Omomi
+  tx_ctc_acon                              String?  // ctc_acon
+  tx_ctc_tdil                              String?  // ctc_tdil
+  tx_ctc_tdil_psn                          String?  // ctc_tdil_psn
+  tx_ctc_tdnr                              String?  // ctc_tdnr
+  tx_ctc_tdty                              String?  // ctc_tdty
+  tx_ctc_prbs                              String?  // ctc_prbs
+  tx_ctc_yrbd                              String?  // ctc_yrbd
+  tx_ctc_prja                              String?  // ctc_prja
+  tx_ctc_yrja                              String?  // ctc_yrja
+  tx_ctc_prbs_svz                          String?  // ctc_prbs_svz
+  tx_ctc_yrbd_svz                          String?  // ctc_yrbd_svz
+  tx_ctc_ShEb_Yr                           String?  // ctc_ShEb_Yr
+  tx_ctc_ShEb_Sm                           String?  // ctc_ShEb_Sm
+  tx_ctc_End_brv                           String?  // ctc_End_brv
+  tx_ctc_N                                 String?  // ctc_N
+  tx_ctc_onta                              String?  // ctc_onta
+  tx_ctc_cota                              String?  // ctc_cota
+  tx_ctc_onpj                              String?  // ctc_onpj
+  tx_ctc_coon                              String?  // ctc_coon
+  tx_ctc_sand                              String?  // ctc_sand
+  tx_ctc_sand_svz                          String?  // ctc_sand_svz
+  tx_ctc_sand_psn                          String?  // ctc_sand_psn
+  tx_ctc_dtbv                              String?  // ctc_dtbv
+  tx_ctc_neza                              String?  // ctc_neza
+  tx_ctc_mont                              String?  // ctc_mont
+  tx_ctc_days                              String?  // ctc_days
+  tx_ctc_area                              String?  // ctc_area
+  tx_ctc_plpj                              String?  // ctc_plpj
+  tx_ctc_mjta                              String?  // ctc_mjta
+  tx_ctc_rsmo                              String?  // ctc_rsmo
+  tx_ctc_mota                              String?  // ctc_mota
+  tx_ctc_etmo                              String?  // ctc_etmo
+  tx_ctc_dscr                              String?  // ctc_dscr
+  tx_mog_zrib1_tit                         String?  // mog_zrib1_tit
+  tx_mog_zrib2_tit                         String?  // mog_zrib2_tit
+  tx_mog_zrib3_tit                         String?  // mog_zrib3_tit
+  tx_ctc_AnalyzeType                       String?  // ctc_AnalyzeType
+  tx_ctc_AnalyzeAll                        String?  // ctc_AnalyzeAll
+  tx_ctc_AnalyzeNote                       String?  // ctc_AnalyzeNote
+  tx_ctc_IsLocked                          String?  // ctc_IsLocked
+  tx_ctc_Pass_Lock                         String?  // ctc_Pass_Lock
+  tx_ctc_User_Lock                         String?  // ctc_User_Lock
+  tx_ctc_type_tjhz                         String?  // ctc_type_tjhz
+  tx_ctc_rzmt_tgnu                         String?  // ctc_rzmt_tgnu
+  tx_ctc_rzmt_tgtl                         String?  // ctc_rzmt_tgtl
+  tx_ctc_rzmt_tgaz                         String?  // ctc_rzmt_tgaz
+  tx_ctc_rzmt_tght                         String?  // ctc_rzmt_tght
+  tx_ctc_rzmt_tgwg                         String?  // ctc_rzmt_tgwg
+  tx_ctc_rzmt_tgjz                         String?  // ctc_rzmt_tgjz
+  tx_ctc_rzmt_tgjk                         String?  // ctc_rzmt_tgjk
+  tx_ctc_khmt_tgjz                         String?  // ctc_khmt_tgjz
+  tx_ctc_khmt_tgjr                         String?  // ctc_khmt_tgjr
+  tx_ctc_khmt_tgjk                         String?  // ctc_khmt_tgjk
+  tx_ctc_khmt_tgmo_k123                    String?  // ctc_khmt_tgmo_k123
+  tx_ctc_khmt_tgmo                         String?  // ctc_khmt_tgmo
+  tx_ctc_bgml_brqn                         String?  // ctc_bgml_brqn
+  tx_ctc_bgml_dnqn                         String?  // ctc_bgml_dnqn
+  tx_ctc_bgml_dnpr                         String?  // ctc_bgml_dnpr
+  tx_ctc_bgml_pcun                         String?  // ctc_bgml_pcun
+  tx_ctc_bgml_65_pcun                      String?  // ctc_bgml_65_pcun
+  tx_ctc_bgml_wgpr                         String?  // ctc_bgml_wgpr
+  tx_ctc_bgml_roshd                        String?  // ctc_bgml_roshd
+  tx_ctc_seas_wgpr                         String?  // ctc_seas_wgpr
+  tx_ctc_seas_dnpr                         String?  // ctc_seas_dnpr
+  tx_ctc_note_wgpr                         String?  // ctc_note_wgpr
+  tx_ctc_note_dnpr                         String?  // ctc_note_dnpr
+  tx_ctc_haml_kzrb                         String?  // ctc_haml_kzrb
+  tx_ctc_haml_tzrb                         String?  // ctc_haml_tzrb
+  tx_ctc_haml_quan                         String?  // ctc_haml_quan
+  tx_ctc_haml_tgjm                         String?  // ctc_haml_tgjm
+  tx_ctc_dist_dist                         String?  // ctc_dist_dist
+  tx_ctc_dist_i                            String?  // ctc_dist_i
+  tx_ctc_fosi_quan                         String?  // ctc_fosi_quan
+  tx_ctc_fosi_pert                         String?  // ctc_fosi_pert
+  tx_ctc_fosi_nrkh                         String?  // ctc_fosi_nrkh
+  tx_ctc_fosi_sal                          String?  // ctc_fosi_sal
+  tx_ctc_fosi_ksrt                         String?  // ctc_fosi_ksrt
+  tx_ctc_anab_wgpr                         String?  // ctc_anab_wgpr
+  tx_ctc_anab_quan                         String?  // ctc_anab_quan
+  tx_ctc_anab_pcun                         String?  // ctc_anab_pcun
+  tx_ctc_anab_zrib                         String?  // ctc_anab_zrib
+  tx_ctc_anab_pcal                         String?  // ctc_anab_pcal
+  tx_ctc_anab_zrib_ralc                    String?  // ctc_anab_zrib_ralc
+  tx_ctc_anab_grpr                         String?  // ctc_anab_grpr
+  tx_ctc_sorc_pcun                         String?  // ctc_sorc_pcun
+  tx_ctc_sorc_quan                         String?  // ctc_sorc_quan
+  tx_ctc_sorc_wgpr                         String?  // ctc_sorc_wgpr
+  tx_ctc_acts_phpr                         String?  // ctc_acts_phpr
+  tx_ctc_acts_dnpr                         String?  // ctc_acts_dnpr
+  tx_ctc_acts_wgpr                         String?  // ctc_acts_wgpr
+  tx_ctc_acts_pcun                         String?  // ctc_acts_pcun
+  tx_ctc_acts_quan                         String?  // ctc_acts_quan
+  tx_ctc_acts_quan_sorc                    String?  // ctc_acts_quan_sorc
+  tx_ctc_acts_wgpr_sorc                    String?  // ctc_acts_wgpr_sorc
+  tx_ctc_koli_pcal                         String?  // ctc_koli_pcal
+  tx_ctc_koli_pcun                         String?  // ctc_koli_pcun
+  tx_ctc_koli_quan                         String?  // ctc_koli_quan
+  tx_ctc_pic_arm                           String?  // ctc_pic_arm
+  tx_ctc_pic_status                        String?  // ctc_pic_status
+  tx_ctc_haml_from                         String?  // ctc_haml_from
+  tx_ctc_numb                              String?  // ctc_numb
+  tx_ctc_dtct                              String?  // ctc_dtct
+  tx_ctc_dtst                              String?  // ctc_dtst
+  tx_ctc_timh                              String?  // ctc_timh
+  tx_ctc_tidy                              String?  // ctc_tidy
+  tx_ctc_timp                              String?  // ctc_timp
+  tx_ctc_tidp                              String?  // ctc_tidp
+  tx_ctc_pric_prim                         String?  // ctc_pric_prim
+  tx_ctc_dend                              String?  // ctc_dend
+  tx_ctc_pctj                              String?  // ctc_pctj
+  tx_ctc_rpt_khzr                          String?  // ctc_rpt_khzr
+  tx_ctc_rpt_wp_type                       String?  // ctc_rpt_wp_type
+  tx_ctc_rpt_item                          String?  // ctc_rpt_item
+  tx_ctc_signatue_exist                    String?  // ctc_signatue_exist
+  tx_ctc_tjhz_sx                           String?  // ctc_tjhz_sx
+  tx_ctc_tjhz_fc                           String?  // ctc_tjhz_fc
+  tx_ctc_tjhz_mp                           String?  // ctc_tjhz_mp
+  tx_ctc_fmul_tjhz                         String?  // ctc_fmul_tjhz
+  tx_ctc_ProjectCreator                    String?  // ctc_ProjectCreator
+  tx_ctc_Description                       String?  // ctc_Description
+  tx_ctc_prja_astr                         String?  // ctc_prja_astr
+  tx_ctc_yrja_astr                         String?  // ctc_yrja_astr
+  tx_ctc_prmb_astr                         String?  // ctc_prmb_astr
+  tx_ctc_yrmb_astr                         String?  // ctc_yrmb_astr
+  tx_ctc_Is76574                           String?  // ctc_Is76574
+  tx_ctc_conc                              String?  // ctc_conc
+  tx_ctc_CheckCodeAmel                     String?  // ctc_CheckCodeAmel
+  tx_ctc_atm_tg_pr                         String?  // ctc_atm_tg_pr
+  tx_ctc_analyse_year                      String?  // ctc_analyse_year
+  tx_ctc_code                              String?  // ctc_code
+  tx_ctc_DateCreate                        String?  // ctc_DateCreate
+  tx_ctc_DateModi                          String?  // ctc_DateModi
+  tx_ctc_DateRestore                       String?  // ctc_DateRestore
+  tx_ctc_code_Create                       String?  // ctc_code_Create
+  tx_ctc_calcTadilGhir                     String?  // ctc_calcTadilGhir
+  tx_ctc_restoreFromVb6                    String?  // ctc_restoreFromVb6
+  tx_ctc_Shart50Item                       String?  // ctc_Shart50Item
+  tx_ctc_hasEngFeh                         String?  // ctc_hasEngFeh
+  tx_ctc_DarsadVazniType                   String?  // ctc_DarsadVazniType
+  tx_ctc_sarjam96                          String?  // ctc_sarjam96
+  tx_ctc_dtlastPishnahad                   String?  // ctc_dtlastPishnahad
+  tx_ctc_showFullDesc                      String?  // ctc_showFullDesc
+  tx_ctc_kasrNew76574                      String?  // ctc_kasrNew76574
+  tx_ctc_ShowTypSumm                       String?  // ctc_ShowTypSumm
+  tx_ctc_dteb                              String?  // ctc_dteb
+  tx_ctc_dendPrim                          String?  // ctc_dendPrim
+  tx_ctc_Barcode                           String?  // ctc_Barcode
+  tx_ctc_unit                              String?  // ctc_unit
+  tx_Version                               String?  // Version
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_contract")
+  @@index([importId])
+}
+
+model Brv_elhagh {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_elh_link_proj                         String?  // elh_link_proj
+  tx_elh_id                                String?  // elh_id
+  tx_elh_rad                               String?  // elh_rad
+  tx_elh_dscr                              String?  // elh_dscr
+  tx_elh_price                             String?  // elh_price
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_elhagh")
+  @@index([importId])
+}
+
+model Brv_type {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_typ_link_proj                         String?  // typ_link_proj
+  tx_typ_id                                String?  // typ_id
+  tx_typ_rad                               String?  // typ_rad
+  tx_typ_name                              String?  // typ_name
+  tx_typ_color_name_far                    String?  // typ_color_name_far
+  tx_typ_name_delegate                     String?  // typ_name_delegate
+  tx_typ_PrintSignature                    String?  // typ_PrintSignature
+  tx_typ_sum_work_ol_z                     String?  // typ_sum_work_ol_z
+  tx_typ_PrintName                         String?  // typ_PrintName
+  tx_typ_absName                           String?  // typ_absName
+  tx_typ_PertypId                          String?  // typ_PertypId
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_type")
+  @@index([importId])
+}
+
+model Brv_situ {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_stu_link_proj                         String?  // stu_link_proj
+  tx_stu_id                                String?  // stu_id
+  tx_stu_rad                               String?  // stu_rad
+  tx_stu_numb                              String?  // stu_numb
+  tx_stu_Barcode                           String?  // stu_Barcode
+  tx_stu_StnId                             String?  // stu_StnId
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_situ")
+  @@index([importId])
+}
+
+model Brv_intp {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_itp_link_proj                         String?  // itp_link_proj
+  tx_itp_nusv                              String?  // itp_nusv
+  tx_itp_type                              String?  // itp_type
+  tx_itp_nusv_previous                     String?  // itp_nusv_previous
+  tx_itp_type_previous                     String?  // itp_type_previous
+  tx_itp_num_prod                          String?  // itp_num_prod
+  tx_itp_year                              String?  // itp_year
+  tx_itp_rad                               String?  // itp_rad
+  tx_itp_prod                              String?  // itp_prod
+  tx_itp_tidy                              String?  // itp_tidy
+  tx_itp_avg                               String?  // itp_avg
+  tx_itp_year_shkh                         String?  // itp_year_shkh
+  tx_itp_num_prod_shkh                     String?  // itp_num_prod_shkh
+  tx_itp_type_shkh                         String?  // itp_type_shkh
+  tx_itp_num_type_shkh                     String?  // itp_num_type_shkh
+  tx_itp_prod_shkh                         String?  // itp_prod_shkh
+  tx_itp_t                                 String?  // itp_t
+  tx_itp_num_mon_prod                      String?  // itp_num_mon_prod
+  tx_itp_num_mon_shkh                      String?  // itp_num_mon_shkh
+  tx_itp_z_a                               String?  // itp_z_a
+  tx_itp_b_a                               String?  // itp_b_a
+  tx_itp_vaziat                            String?  // itp_vaziat
+  tx_itp_Noe                               String?  // itp_Noe
+  tx_itp_type_current                      String?  // itp_type_current
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_intp")
+  @@index([importId])
+}
+
+model Brv_kosorat {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_ksr_link_proj                         String?  // ksr_link_proj
+  tx_ksr_nusv                              String?  // ksr_nusv
+  tx_ksr_type                              String?  // ksr_type
+  tx_ksr_id                                String?  // ksr_id
+  tx_ksr_rad                               String?  // ksr_rad
+  tx_ksr_name                              String?  // ksr_name
+  tx_ksr_prcn                              String?  // ksr_prcn
+  tx_ksr_PlusOrMinec                       String?  // ksr_PlusOrMinec
+  tx_ksr_Mablaghi                          String?  // ksr_Mablaghi
+  tx_ksr_price                             String?  // ksr_price
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_kosorat")
+  @@index([importId])
+}
+
+model Brv_ahta {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_ata_link_proj                         String?  // ata_link_proj
+  tx_ata_nufh                              String?  // ata_nufh
+  tx_ata_nuse                              String?  // ata_nuse
+  tx_ata_nusv_previous                     String?  // ata_nusv_previous
+  tx_ata_type_previous                     String?  // ata_type_previous
+  tx_ata_nusv                              String?  // ata_nusv
+  tx_ata_type                              String?  // ata_type
+  tx_ata_inrd                              String?  // ata_inrd
+  tx_ata_year                              String?  // ata_year
+  tx_ata_rad                               String?  // ata_rad
+  tx_ata_nufh_name                         String?  // ata_nufh_name
+  tx_ata_name                              String?  // ata_name
+  tx_ata_pcnw                              String?  // ata_pcnw
+  tx_ata_pcol                              String?  // ata_pcol
+  tx_ata_pcnz                              String?  // ata_pcnz
+  tx_ata_pcoz                              String?  // ata_pcoz
+  tx_ata_zrta                              String?  // ata_zrta
+  tx_ata_tidy                              String?  // ata_tidy
+  tx_ata_pcwp                              String?  // ata_pcwp
+  tx_ata_pcwz                              String?  // ata_pcwz
+  tx_ata_pcta                              String?  // ata_pcta
+  tx_ata_pctz                              String?  // ata_pctz
+  tx_ata_shnw                              String?  // ata_shnw
+  tx_ata_shbs                              String?  // ata_shbs
+  tx_ata_fsrs                              String?  // ata_fsrs
+  tx_ata_str_prod                          String?  // ata_str_prod
+  tx_ata_str_avg                           String?  // ata_str_avg
+  tx_ata_str_tatb                          String?  // ata_str_tatb
+  tx_ata_pcnw_3m                           String?  // ata_pcnw_3m
+  tx_ata_pcol_3m                           String?  // ata_pcol_3m
+  tx_ata_pcnz_3m                           String?  // ata_pcnz_3m
+  tx_ata_pcoz_3m                           String?  // ata_pcoz_3m
+  tx_ata_year_shkh                         String?  // ata_year_shkh
+  tx_ata_prod_shkh                         String?  // ata_prod_shkh
+  tx_ata_pcnz_bedunebalasari               String?  // ata_pcnz_bedunebalasari
+  tx_ata_pcoz_bedunebalasari               String?  // ata_pcoz_bedunebalasari
+  tx_ata_inMon                             String?  // ata_inMon
+  tx_ata_inMon_shkh                        String?  // ata_inMon_shkh
+  tx_ata_itprad                            String?  // ata_itprad
+  tx_ata_str_avg_mbn_99                    String?  // ata_str_avg_mbn_99
+  tx_ata_SahmPishPar                       String?  // ata_SahmPishPar
+  tx_ata_No_Zero                           String?  // ata_No_Zero
+  tx_ata_pcoz_compare                      String?  // ata_pcoz_compare
+  tx_ata_str_avg_HamlExc                   String?  // ata_str_avg_HamlExc
+  tx_ata_nuse_real                         String?  // ata_nuse_real
+  tx_ata_NuseForSh                         String?  // ata_NuseForSh
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_ahta")
+  @@index([importId])
+}
+
+model Brv_acts {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_act_link_proj                         String?  // act_link_proj
+  tx_act_coac                              String?  // act_coac
+  tx_act_nusv                              String?  // act_nusv
+  tx_act_type                              String?  // act_type
+  tx_act_id                                String?  // act_id
+  tx_act_parent                            String?  // act_parent
+  tx_act_level                             String?  // act_level
+  tx_act_rad                               String?  // act_rad
+  tx_act_name                              String?  // act_name
+  tx_act_unit                              String?  // act_unit
+  tx_act_zrib                              String?  // act_zrib
+  tx_act_prcn                              String?  // act_prcn
+  tx_act_prcn_ol                           String?  // act_prcn_ol
+  tx_act_weit                              String?  // act_weit
+  tx_act_prcf                              String?  // act_prcf
+  tx_act_task_type                         String?  // act_task_type
+  tx_act_duration                          String?  // act_duration
+  tx_act_User_Edit                         String?  // act_User_Edit
+  tx_act_Start                             String?  // act_Start
+  tx_act_Finish                            String?  // act_Finish
+  tx_act_Min_Start_User                    String?  // act_Min_Start_User
+  tx_act_Min_Start_CPM                     String?  // act_Min_Start_CPM
+  tx_act_IsSummery                         String?  // act_IsSummery
+  tx_act_IsPlanned                         String?  // act_IsPlanned
+  tx_act_weit_koll                         String?  // act_weit_koll
+  tx_act_SetTatbighDasti                   String?  // act_SetTatbighDasti
+  tx_act_total_rad                         String?  // act_total_rad
+  tx_IsParent                              String?  // IsParent
+  tx_IsLeaf                                String?  // IsLeaf
+  tx_NewCoac                               String?  // NewCoac
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_acts")
+  @@index([importId])
+}
+
+model Brv_type_situ {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_tst_link_proj                         String?  // tst_link_proj
+  tx_tst_nusv                              String?  // tst_nusv
+  tx_tst_type                              String?  // tst_type
+  tx_tst_rad                               String?  // tst_rad
+  tx_tst_date                              String?  // tst_date
+  tx_tst_date_previous                     String?  // tst_date_previous
+  tx_tst_type_previous_compare             String?  // tst_type_previous_compare
+  tx_tst_is_locked                         String?  // tst_is_locked
+  tx_tst_lock_pass                         String?  // tst_lock_pass
+  tx_tst_selected                          String?  // tst_selected
+  tx_tst_FirstDay_Intp                     String?  // tst_FirstDay_Intp
+  tx_tst_code                              String?  // tst_code
+  tx_tst_hastatbigh                        String?  // tst_hastatbigh
+  tx_tst_tadilmanfi                        String?  // tst_tadilmanfi
+  tx_tst_type_current_tadil                String?  // tst_type_current_tadil
+  tx_tst_date_current_tadil                String?  // tst_date_current_tadil
+  tx_tst_PishPardakht                      String?  // tst_PishPardakht
+  tx_tst_PishPardakhtMande                 String?  // tst_PishPardakhtMande
+  tx_tst_nusv_previous                     String?  // tst_nusv_previous
+  tx_tst_type_previous                     String?  // tst_type_previous
+  tx_tst_nusv_previous_tadil               String?  // tst_nusv_previous_tadil
+  tx_tst_type_previous_tadil               String?  // tst_type_previous_tadil
+  tx_tst_date_previous_tadil               String?  // tst_date_previous_tadil
+  tx_tst_mbsv                              String?  // tst_mbsv
+  tx_tst_mbtd_sum                          String?  // tst_mbtd_sum
+  tx_tst_mbtd_sum_rs                       String?  // tst_mbtd_sum_rs
+  tx_tst_mbtd_sum_previous                 String?  // tst_mbtd_sum_previous
+  tx_tst_mbtd_sum_previous_rs              String?  // tst_mbtd_sum_previous_rs
+  tx_tst_codeModi                          String?  // tst_codeModi
+  tx_tst_DateModi                          String?  // tst_DateModi
+  tx_tst_dateCreateAuto                    String?  // tst_dateCreateAuto
+  tx_tst_nusv_previousAuto                 String?  // tst_nusv_previousAuto
+  tx_tst_type_previousAuto                 String?  // tst_type_previousAuto
+  tx_tst_codePrjSrcCopy                    String?  // tst_codePrjSrcCopy
+  tx_tst_mbsv_previous                     String?  // tst_mbsv_previous
+  tx_tst_tgrb_zrtd                         String?  // tst_tgrb_zrtd
+  tx_tst_type_tdil                         String?  // tst_type_tdil
+  tx_tst_zrib_tdil                         String?  // tst_zrib_tdil
+  tx_tst_parent_nusv                       String?  // tst_parent_nusv
+  tx_tst_parent_type                       String?  // tst_parent_type
+  tx_tst_datetimeRestore                   String?  // tst_datetimeRestore
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_type_situ")
+  @@index([importId])
+}
+
+model Brv_fhpy {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_fhp_link_proj                         String?  // fhp_link_proj
+  tx_fhp_nufh                              String?  // fhp_nufh
+  tx_fhp_nusv                              String?  // fhp_nusv
+  tx_fhp_type                              String?  // fhp_type
+  tx_fhp_abst                              String?  // fhp_abst
+  tx_fhp_dscr                              String?  // fhp_dscr
+  tx_fhp_rad                               String?  // fhp_rad
+  tx_fhp_plmu_tit                          String?  // fhp_plmu_tit
+  tx_fhp_loca_tit                          String?  // fhp_loca_tit
+  tx_fhp_heit_tit                          String?  // fhp_heit_tit
+  tx_fhp_taba_tit                          String?  // fhp_taba_tit
+  tx_fhp_hard_tit                          String?  // fhp_hard_tit
+  tx_fhp_tatb_tit                          String?  // fhp_tatb_tit
+  tx_fhp_ovhd_tit                          String?  // fhp_ovhd_tit
+  tx_fhp_zrmp1_tit                         String?  // fhp_zrmp1_tit
+  tx_fhp_zrmp2_tit                         String?  // fhp_zrmp2_tit
+  tx_fhp_loca_tit_psn                      String?  // fhp_loca_tit_psn
+  tx_fhp_heit_tit_psn                      String?  // fhp_heit_tit_psn
+  tx_fhp_taba_tit_psn                      String?  // fhp_taba_tit_psn
+  tx_fhp_hard_tit_psn                      String?  // fhp_hard_tit_psn
+  tx_fhp_tatb_tit_psn                      String?  // fhp_tatb_tit_psn
+  tx_fhp_ovhd_tit_psn                      String?  // fhp_ovhd_tit_psn
+  tx_fhp_plmu                              String?  // fhp_plmu
+  tx_fhp_plmu_s                            String?  // fhp_plmu_s
+  tx_fhp_plmu_fc                           String?  // fhp_plmu_fc
+  tx_fhp_plmu_mp                           String?  // fhp_plmu_mp
+  tx_fhp_plmu_s_mp                         String?  // fhp_plmu_s_mp
+  tx_fhp_plmu_fc_mp                        String?  // fhp_plmu_fc_mp
+  tx_fhp_loca                              String?  // fhp_loca
+  tx_fhp_loca_s                            String?  // fhp_loca_s
+  tx_fhp_loca_fc                           String?  // fhp_loca_fc
+  tx_fhp_loca_mp                           String?  // fhp_loca_mp
+  tx_fhp_loca_s_mp                         String?  // fhp_loca_s_mp
+  tx_fhp_loca_fc_mp                        String?  // fhp_loca_fc_mp
+  tx_fhp_heit                              String?  // fhp_heit
+  tx_fhp_heit_s                            String?  // fhp_heit_s
+  tx_fhp_heit_fc                           String?  // fhp_heit_fc
+  tx_fhp_heit_mp                           String?  // fhp_heit_mp
+  tx_fhp_heit_s_mp                         String?  // fhp_heit_s_mp
+  tx_fhp_heit_fc_mp                        String?  // fhp_heit_fc_mp
+  tx_fhp_taba                              String?  // fhp_taba
+  tx_fhp_taba_s                            String?  // fhp_taba_s
+  tx_fhp_taba_fc                           String?  // fhp_taba_fc
+  tx_fhp_taba_mp                           String?  // fhp_taba_mp
+  tx_fhp_taba_s_mp                         String?  // fhp_taba_s_mp
+  tx_fhp_taba_fc_mp                        String?  // fhp_taba_fc_mp
+  tx_fhp_hard                              String?  // fhp_hard
+  tx_fhp_hard_s                            String?  // fhp_hard_s
+  tx_fhp_hard_fc                           String?  // fhp_hard_fc
+  tx_fhp_hard_mp                           String?  // fhp_hard_mp
+  tx_fhp_hard_s_mp                         String?  // fhp_hard_s_mp
+  tx_fhp_hard_fc_mp                        String?  // fhp_hard_fc_mp
+  tx_fhp_tatb                              String?  // fhp_tatb
+  tx_fhp_tatb_s                            String?  // fhp_tatb_s
+  tx_fhp_tatb_fc                           String?  // fhp_tatb_fc
+  tx_fhp_tatb_mp                           String?  // fhp_tatb_mp
+  tx_fhp_tatb_s_mp                         String?  // fhp_tatb_s_mp
+  tx_fhp_tatb_fc_mp                        String?  // fhp_tatb_fc_mp
+  tx_fhp_oth1                              String?  // fhp_oth1
+  tx_fhp_oth1_s                            String?  // fhp_oth1_s
+  tx_fhp_oth1_fc                           String?  // fhp_oth1_fc
+  tx_fhp_oth1_mp                           String?  // fhp_oth1_mp
+  tx_fhp_oth1_s_mp                         String?  // fhp_oth1_s_mp
+  tx_fhp_oth1_fc_mp                        String?  // fhp_oth1_fc_mp
+  tx_fhp_oth2                              String?  // fhp_oth2
+  tx_fhp_oth2_s                            String?  // fhp_oth2_s
+  tx_fhp_oth2_fc                           String?  // fhp_oth2_fc
+  tx_fhp_oth2_mp                           String?  // fhp_oth2_mp
+  tx_fhp_oth2_s_mp                         String?  // fhp_oth2_s_mp
+  tx_fhp_oth2_fc_mp                        String?  // fhp_oth2_fc_mp
+  tx_fhp_oth3                              String?  // fhp_oth3
+  tx_fhp_oth3_s                            String?  // fhp_oth3_s
+  tx_fhp_oth3_fc                           String?  // fhp_oth3_fc
+  tx_fhp_oth3_mp                           String?  // fhp_oth3_mp
+  tx_fhp_oth3_s_mp                         String?  // fhp_oth3_s_mp
+  tx_fhp_oth3_fc_mp                        String?  // fhp_oth3_fc_mp
+  tx_fhp_ovhd                              String?  // fhp_ovhd
+  tx_fhp_ovhd_s                            String?  // fhp_ovhd_s
+  tx_fhp_ovhd_fc                           String?  // fhp_ovhd_fc
+  tx_fhp_ovhd_mp                           String?  // fhp_ovhd_mp
+  tx_fhp_ovhd_s_mp                         String?  // fhp_ovhd_s_mp
+  tx_fhp_ovhd_fc_mp                        String?  // fhp_ovhd_fc_mp
+  tx_fhp_sumz                              String?  // fhp_sumz
+  tx_fhp_sumz_s                            String?  // fhp_sumz_s
+  tx_fhp_sumz_fc                           String?  // fhp_sumz_fc
+  tx_fhp_sumz_mp                           String?  // fhp_sumz_mp
+  tx_fhp_sumz_s_mp                         String?  // fhp_sumz_s_mp
+  tx_fhp_sumz_fc_mp                        String?  // fhp_sumz_fc_mp
+  tx_fhp_zrmp                              String?  // fhp_zrmp
+  tx_fhp_zrse                              String?  // fhp_zrse
+  tx_fhp_tjhz_prcn                         String?  // fhp_tjhz_prcn
+  tx_fhp_tgrb                              String?  // fhp_tgrb
+  tx_fhp_loca_psn                          String?  // fhp_loca_psn
+  tx_fhp_loca_s_psn                        String?  // fhp_loca_s_psn
+  tx_fhp_loca_fc_psn                       String?  // fhp_loca_fc_psn
+  tx_fhp_heit_psn                          String?  // fhp_heit_psn
+  tx_fhp_heit_s_psn                        String?  // fhp_heit_s_psn
+  tx_fhp_heit_fc_psn                       String?  // fhp_heit_fc_psn
+  tx_fhp_taba_psn                          String?  // fhp_taba_psn
+  tx_fhp_taba_s_psn                        String?  // fhp_taba_s_psn
+  tx_fhp_taba_fc_psn                       String?  // fhp_taba_fc_psn
+  tx_fhp_hard_psn                          String?  // fhp_hard_psn
+  tx_fhp_hard_s_psn                        String?  // fhp_hard_s_psn
+  tx_fhp_hard_fc_psn                       String?  // fhp_hard_fc_psn
+  tx_fhp_tatb_psn                          String?  // fhp_tatb_psn
+  tx_fhp_tatb_s_psn                        String?  // fhp_tatb_s_psn
+  tx_fhp_tatb_fc_psn                       String?  // fhp_tatb_fc_psn
+  tx_fhp_oth1_psn                          String?  // fhp_oth1_psn
+  tx_fhp_oth1_s_psn                        String?  // fhp_oth1_s_psn
+  tx_fhp_oth1_fc_psn                       String?  // fhp_oth1_fc_psn
+  tx_fhp_oth2_psn                          String?  // fhp_oth2_psn
+  tx_fhp_oth2_s_psn                        String?  // fhp_oth2_s_psn
+  tx_fhp_oth2_fc_psn                       String?  // fhp_oth2_fc_psn
+  tx_fhp_oth3_psn                          String?  // fhp_oth3_psn
+  tx_fhp_oth3_s_psn                        String?  // fhp_oth3_s_psn
+  tx_fhp_oth3_fc_psn                       String?  // fhp_oth3_fc_psn
+  tx_fhp_ovhd_psn                          String?  // fhp_ovhd_psn
+  tx_fhp_ovhd_s_psn                        String?  // fhp_ovhd_s_psn
+  tx_fhp_ovhd_fc_psn                       String?  // fhp_ovhd_fc_psn
+  tx_fhp_sumz_psn                          String?  // fhp_sumz_psn
+  tx_fhp_sumz_s_psn                        String?  // fhp_sumz_s_psn
+  tx_fhp_sumz_fc_psn                       String?  // fhp_sumz_fc_psn
+  tx_fhp_tgrb_psn                          String?  // fhp_tgrb_psn
+  tx_fhp_mbfh_tdil_psn                     String?  // fhp_mbfh_tdil_psn
+  tx_fhp_mb_totl_tdil_psn                  String?  // fhp_mb_totl_tdil_psn
+  tx_fhp_mbfh_tdil_psn_z                   String?  // fhp_mbfh_tdil_psn_z
+  tx_fhp_mb_totl_tdil_psn_z                String?  // fhp_mb_totl_tdil_psn_z
+  tx_fhp_is_locked                         String?  // fhp_is_locked
+  tx_fhp_tdil_tatb                         String?  // fhp_tdil_tatb
+  tx_fhp_rzmt_numo_header                  String?  // fhp_rzmt_numo_header
+  tx_fhp_rzmt_tool_header                  String?  // fhp_rzmt_tool_header
+  tx_fhp_rzmt_arz_header                   String?  // fhp_rzmt_arz_header
+  tx_fhp_rzmt_heit_header                  String?  // fhp_rzmt_heit_header
+  tx_fhp_rzmt_weit_header                  String?  // fhp_rzmt_weit_header
+  tx_fhp_2Item                             String?  // fhp_2Item
+  tx_fhp_tdil_tatb_taj_Just_RahNufh        String?  // fhp_tdil_tatb_taj_Just_RahNufh
+  tx_fhp_mbfh                              String?  // fhp_mbfh
+  tx_fhp_mbsx                              String?  // fhp_mbsx
+  tx_fhp_mbfc                              String?  // fhp_mbfc
+  tx_fhp_mb_totl                           String?  // fhp_mb_totl
+  tx_fhp_mbfh_z                            String?  // fhp_mbfh_z
+  tx_fhp_mbsx_z                            String?  // fhp_mbsx_z
+  tx_fhp_mbfc_z                            String?  // fhp_mbfc_z
+  tx_fhp_mb_totl_z                         String?  // fhp_mb_totl_z
+  tx_fhp_mbfh_work                         String?  // fhp_mbfh_work
+  tx_fhp_mbsx_work                         String?  // fhp_mbsx_work
+  tx_fhp_mbfc_work                         String?  // fhp_mbfc_work
+  tx_fhp_mbmp_work                         String?  // fhp_mbmp_work
+  tx_fhp_mb_work                           String?  // fhp_mb_work
+  tx_fhp_mbfh_work_z                       String?  // fhp_mbfh_work_z
+  tx_fhp_mbsx_work_z                       String?  // fhp_mbsx_work_z
+  tx_fhp_mbfc_work_z                       String?  // fhp_mbfc_work_z
+  tx_fhp_mbmp_work_z                       String?  // fhp_mbmp_work_z
+  tx_fhp_mb_work_z                         String?  // fhp_mb_work_z
+  tx_fhp_pr_work                           String?  // fhp_pr_work
+  tx_fhp_pr_work_z                         String?  // fhp_pr_work_z
+  tx_fhp_mbtj_work                         String?  // fhp_mbtj_work
+  tx_fhp_mbtj_fmul_work                    String?  // fhp_mbtj_fmul_work
+  tx_fhp_mbfh_work_tatb                    String?  // fhp_mbfh_work_tatb
+  tx_fhp_mbsx_work_tatb                    String?  // fhp_mbsx_work_tatb
+  tx_fhp_mbfc_work_tatb                    String?  // fhp_mbfc_work_tatb
+  tx_fhp_mbmp_work_tatb                    String?  // fhp_mbmp_work_tatb
+  tx_fhp_mb_work_tatb                      String?  // fhp_mb_work_tatb
+  tx_fhp_mbfh_work_tatb_z                  String?  // fhp_mbfh_work_tatb_z
+  tx_fhp_mbsx_work_tatb_z                  String?  // fhp_mbsx_work_tatb_z
+  tx_fhp_mbfc_work_tatb_z                  String?  // fhp_mbfc_work_tatb_z
+  tx_fhp_mbmp_work_tatb_z                  String?  // fhp_mbmp_work_tatb_z
+  tx_fhp_mb_work_tatb_z                    String?  // fhp_mb_work_tatb_z
+  tx_fhp_mbtj_work_tatb                    String?  // fhp_mbtj_work_tatb
+  tx_fhp_fzkh_new                          String?  // fhp_fzkh_new
+  tx_fhp_fzkh                              String?  // fhp_fzkh
+  tx_fhp_fzkh_fznew                        String?  // fhp_fzkh_fznew
+  tx_fhp_fzkh_kh                           String?  // fhp_fzkh_kh
+  tx_fhp_fzkh_sum                          String?  // fhp_fzkh_sum
+  tx_fhp_fzkh_new_z                        String?  // fhp_fzkh_new_z
+  tx_fhp_fzkh_z                            String?  // fhp_fzkh_z
+  tx_fhp_fzkh_fznew_z                      String?  // fhp_fzkh_fznew_z
+  tx_fhp_fzkh_kh_z                         String?  // fhp_fzkh_kh_z
+  tx_fhp_fzkh_sum_z                        String?  // fhp_fzkh_sum_z
+  tx_fhp_mbfh_tdil                         String?  // fhp_mbfh_tdil
+  tx_fhp_mbsx_tdil                         String?  // fhp_mbsx_tdil
+  tx_fhp_mb_totl_tdil                      String?  // fhp_mb_totl_tdil
+  tx_fhp_mbfh_tdil_z                       String?  // fhp_mbfh_tdil_z
+  tx_fhp_mbsx_tdil_z                       String?  // fhp_mbsx_tdil_z
+  tx_fhp_mb_totl_tdil_z                    String?  // fhp_mb_totl_tdil_z
+  tx_fhp_mb49                              String?  // fhp_mb49
+  tx_fhp_mbtj                              String?  // fhp_mbtj
+  tx_fhp_mbtj_fmul                         String?  // fhp_mbtj_fmul
+  tx_fhp_tl49                              String?  // fhp_tl49
+  tx_fhp_mb_loca_fh                        String?  // fhp_mb_loca_fh
+  tx_fhp_mb_loca_sx                        String?  // fhp_mb_loca_sx
+  tx_fhp_mb_loca                           String?  // fhp_mb_loca
+  tx_fhp_mb_heit_fh                        String?  // fhp_mb_heit_fh
+  tx_fhp_mb_heit_sx                        String?  // fhp_mb_heit_sx
+  tx_fhp_mb_heit                           String?  // fhp_mb_heit
+  tx_fhp_mb_taba_fh                        String?  // fhp_mb_taba_fh
+  tx_fhp_mb_taba_sx                        String?  // fhp_mb_taba_sx
+  tx_fhp_mb_taba                           String?  // fhp_mb_taba
+  tx_fhp_mb_hard_fh                        String?  // fhp_mb_hard_fh
+  tx_fhp_mb_hard_sx                        String?  // fhp_mb_hard_sx
+  tx_fhp_mb_hard                           String?  // fhp_mb_hard
+  tx_fhp_mb_tatb_fh                        String?  // fhp_mb_tatb_fh
+  tx_fhp_mb_tatb_sx                        String?  // fhp_mb_tatb_sx
+  tx_fhp_mb_tatb                           String?  // fhp_mb_tatb
+  tx_fhp_mb_oth1_fh                        String?  // fhp_mb_oth1_fh
+  tx_fhp_mb_oth1_sx                        String?  // fhp_mb_oth1_sx
+  tx_fhp_mb_oth1                           String?  // fhp_mb_oth1
+  tx_fhp_mb_oth2_fh                        String?  // fhp_mb_oth2_fh
+  tx_fhp_mb_oth2_sx                        String?  // fhp_mb_oth2_sx
+  tx_fhp_mb_oth2                           String?  // fhp_mb_oth2
+  tx_fhp_mb_oth3_fh                        String?  // fhp_mb_oth3_fh
+  tx_fhp_mb_oth3_sx                        String?  // fhp_mb_oth3_sx
+  tx_fhp_mb_oth3                           String?  // fhp_mb_oth3
+  tx_fhp_mb_ovhd_fh                        String?  // fhp_mb_ovhd_fh
+  tx_fhp_mb_ovhd_sx                        String?  // fhp_mb_ovhd_sx
+  tx_fhp_mb_ovhd                           String?  // fhp_mb_ovhd
+  tx_fhp_mb_sumz_fh                        String?  // fhp_mb_sumz_fh
+  tx_fhp_mb_sumz_sx                        String?  // fhp_mb_sumz_sx
+  tx_fhp_mb_sumz                           String?  // fhp_mb_sumz
+  tx_fhp_mb_loca_fh_psn                    String?  // fhp_mb_loca_fh_psn
+  tx_fhp_mb_loca_sx_psn                    String?  // fhp_mb_loca_sx_psn
+  tx_fhp_mb_loca_psn                       String?  // fhp_mb_loca_psn
+  tx_fhp_mb_heit_fh_psn                    String?  // fhp_mb_heit_fh_psn
+  tx_fhp_mb_heit_sx_psn                    String?  // fhp_mb_heit_sx_psn
+  tx_fhp_mb_heit_psn                       String?  // fhp_mb_heit_psn
+  tx_fhp_mb_taba_fh_psn                    String?  // fhp_mb_taba_fh_psn
+  tx_fhp_mb_taba_sx_psn                    String?  // fhp_mb_taba_sx_psn
+  tx_fhp_mb_taba_psn                       String?  // fhp_mb_taba_psn
+  tx_fhp_mb_hard_fh_psn                    String?  // fhp_mb_hard_fh_psn
+  tx_fhp_mb_hard_sx_psn                    String?  // fhp_mb_hard_sx_psn
+  tx_fhp_mb_hard_psn                       String?  // fhp_mb_hard_psn
+  tx_fhp_mb_tatb_fh_psn                    String?  // fhp_mb_tatb_fh_psn
+  tx_fhp_mb_tatb_sx_psn                    String?  // fhp_mb_tatb_sx_psn
+  tx_fhp_mb_tatb_psn                       String?  // fhp_mb_tatb_psn
+  tx_fhp_mb_oth1_fh_psn                    String?  // fhp_mb_oth1_fh_psn
+  tx_fhp_mb_oth1_sx_psn                    String?  // fhp_mb_oth1_sx_psn
+  tx_fhp_mb_oth1_psn                       String?  // fhp_mb_oth1_psn
+  tx_fhp_mb_oth2_fh_psn                    String?  // fhp_mb_oth2_fh_psn
+  tx_fhp_mb_oth2_sx_psn                    String?  // fhp_mb_oth2_sx_psn
+  tx_fhp_mb_oth2_psn                       String?  // fhp_mb_oth2_psn
+  tx_fhp_mb_oth3_fh_psn                    String?  // fhp_mb_oth3_fh_psn
+  tx_fhp_mb_oth3_sx_psn                    String?  // fhp_mb_oth3_sx_psn
+  tx_fhp_mb_oth3_psn                       String?  // fhp_mb_oth3_psn
+  tx_fhp_mb_ovhd_fh_psn                    String?  // fhp_mb_ovhd_fh_psn
+  tx_fhp_mb_ovhd_sx_psn                    String?  // fhp_mb_ovhd_sx_psn
+  tx_fhp_mb_ovhd_psn                       String?  // fhp_mb_ovhd_psn
+  tx_fhp_mb_sumz_fh_psn                    String?  // fhp_mb_sumz_fh_psn
+  tx_fhp_mb_sumz_sx_psn                    String?  // fhp_mb_sumz_sx_psn
+  tx_fhp_mb_sumz_psn                       String?  // fhp_mb_sumz_psn
+  tx_fhp_mb49_psn                          String?  // fhp_mb49_psn
+  tx_fhp_mbtj_psn                          String?  // fhp_mbtj_psn
+  tx_fhp_mbtj_fmul_psn                     String?  // fhp_mbtj_fmul_psn
+  tx_fhp_tl49_psn                          String?  // fhp_tl49_psn
+  tx_fhp_roshd_49                          String?  // fhp_roshd_49
+  tx_fhp_mbfh_psn                          String?  // fhp_mbfh_psn
+  tx_fhp_mbsx_psn                          String?  // fhp_mbsx_psn
+  tx_fhp_mbfc_psn                          String?  // fhp_mbfc_psn
+  tx_fhp_mb_totl_psn                       String?  // fhp_mb_totl_psn
+  tx_fhp_roshd                             String?  // fhp_roshd
+  tx_fhp_roshd_tdil                        String?  // fhp_roshd_tdil
+  tx_fhp_mbfh_psn_z                        String?  // fhp_mbfh_psn_z
+  tx_fhp_mbsx_psn_z                        String?  // fhp_mbsx_psn_z
+  tx_fhp_mbfc_psn_z                        String?  // fhp_mbfc_psn_z
+  tx_fhp_mb_totl_psn_z                     String?  // fhp_mb_totl_psn_z
+  tx_fhp_roshd_z                           String?  // fhp_roshd_z
+  tx_fhp_zrib_z                            String?  // fhp_zrib_z
+  tx_fhp_roshd_tdil_z                      String?  // fhp_roshd_tdil_z
+  tx_fhp_mbsx_tdil_psn                     String?  // fhp_mbsx_tdil_psn
+  tx_fhp_roshd_tdil_psn                    String?  // fhp_roshd_tdil_psn
+  tx_fhp_mbsx_tdil_psn_z                   String?  // fhp_mbsx_tdil_psn_z
+  tx_fhp_roshd_tdil_psn_z                  String?  // fhp_roshd_tdil_psn_z
+  tx_fhp_mb_khtd                           String?  // fhp_mb_khtd
+  tx_fhp_mb_khtd_rs                        String?  // fhp_mb_khtd_rs
+  tx_fhp_mbfh_sxmb_work                    String?  // fhp_mbfh_sxmb_work
+  tx_fhp_mbfh_sxmb_work_z                  String?  // fhp_mbfh_sxmb_work_z
+  tx_fhp_mb_work_tatb_z_bedunebalasari     String?  // fhp_mb_work_tatb_z_bedunebalasari
+  tx_fhp_mbtj_work_tatb_bedunebalasari     String?  // fhp_mbtj_work_tatb_bedunebalasari
+  tx_fhp_fzkh_new_z_taj                    String?  // fhp_fzkh_new_z_taj
+  tx_fhp_fzkh_z_taj                        String?  // fhp_fzkh_z_taj
+  tx_fhp_fzkh_kh_z_taj                     String?  // fhp_fzkh_kh_z_taj
+  tx_fhp_fzkh_fznew_z_taj                  String?  // fhp_fzkh_fznew_z_taj
+  tx_fhp_fzkh_sum_z_taj                    String?  // fhp_fzkh_sum_z_taj
+  tx_fhp_mb_work_ol                        String?  // fhp_mb_work_ol
+  tx_fhp_mb_work_ol_z                      String?  // fhp_mb_work_ol_z
+  tx_fhp_mbtj_work_ol                      String?  // fhp_mbtj_work_ol
+  tx_fhp_oth1_tit                          String?  // fhp_oth1_tit
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_fhpy")
+  @@index([importId])
+}
+
+model Brv_mult {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_mlt_link_proj                         String?  // mlt_link_proj
+  tx_mlt_nufh                              String?  // mlt_nufh
+  tx_mlt_nuse                              String?  // mlt_nuse
+  tx_mlt_nusv                              String?  // mlt_nusv
+  tx_mlt_type                              String?  // mlt_type
+  tx_mlt_is_tjhz                           String?  // mlt_is_tjhz
+  tx_mlt_name                              String?  // mlt_name
+  tx_mlt_rad                               String?  // mlt_rad
+  tx_mlt_plmu                              String?  // mlt_plmu
+  tx_mlt_plmu_s                            String?  // mlt_plmu_s
+  tx_mlt_plmu_fc                           String?  // mlt_plmu_fc
+  tx_mlt_plmu_mp                           String?  // mlt_plmu_mp
+  tx_mlt_plmu_s_mp                         String?  // mlt_plmu_s_mp
+  tx_mlt_plmu_fc_mp                        String?  // mlt_plmu_fc_mp
+  tx_mlt_loca                              String?  // mlt_loca
+  tx_mlt_loca_s                            String?  // mlt_loca_s
+  tx_mlt_loca_fc                           String?  // mlt_loca_fc
+  tx_mlt_loca_mp                           String?  // mlt_loca_mp
+  tx_mlt_loca_s_mp                         String?  // mlt_loca_s_mp
+  tx_mlt_loca_fc_mp                        String?  // mlt_loca_fc_mp
+  tx_mlt_heit                              String?  // mlt_heit
+  tx_mlt_heit_s                            String?  // mlt_heit_s
+  tx_mlt_heit_fc                           String?  // mlt_heit_fc
+  tx_mlt_heit_mp                           String?  // mlt_heit_mp
+  tx_mlt_heit_s_mp                         String?  // mlt_heit_s_mp
+  tx_mlt_heit_fc_mp                        String?  // mlt_heit_fc_mp
+  tx_mlt_taba                              String?  // mlt_taba
+  tx_mlt_taba_s                            String?  // mlt_taba_s
+  tx_mlt_taba_fc                           String?  // mlt_taba_fc
+  tx_mlt_taba_mp                           String?  // mlt_taba_mp
+  tx_mlt_taba_s_mp                         String?  // mlt_taba_s_mp
+  tx_mlt_taba_fc_mp                        String?  // mlt_taba_fc_mp
+  tx_mlt_hard                              String?  // mlt_hard
+  tx_mlt_hard_s                            String?  // mlt_hard_s
+  tx_mlt_hard_fc                           String?  // mlt_hard_fc
+  tx_mlt_hard_mp                           String?  // mlt_hard_mp
+  tx_mlt_hard_s_mp                         String?  // mlt_hard_s_mp
+  tx_mlt_hard_fc_mp                        String?  // mlt_hard_fc_mp
+  tx_mlt_tatb                              String?  // mlt_tatb
+  tx_mlt_tatb_s                            String?  // mlt_tatb_s
+  tx_mlt_tatb_fc                           String?  // mlt_tatb_fc
+  tx_mlt_tatb_mp                           String?  // mlt_tatb_mp
+  tx_mlt_tatb_s_mp                         String?  // mlt_tatb_s_mp
+  tx_mlt_tatb_fc_mp                        String?  // mlt_tatb_fc_mp
+  tx_mlt_ovhd                              String?  // mlt_ovhd
+  tx_mlt_ovhd_s                            String?  // mlt_ovhd_s
+  tx_mlt_ovhd_fc                           String?  // mlt_ovhd_fc
+  tx_mlt_ovhd_mp                           String?  // mlt_ovhd_mp
+  tx_mlt_ovhd_s_mp                         String?  // mlt_ovhd_s_mp
+  tx_mlt_ovhd_fc_mp                        String?  // mlt_ovhd_fc_mp
+  tx_mlt_oth1                              String?  // mlt_oth1
+  tx_mlt_oth1_s                            String?  // mlt_oth1_s
+  tx_mlt_oth1_fc                           String?  // mlt_oth1_fc
+  tx_mlt_oth1_mp                           String?  // mlt_oth1_mp
+  tx_mlt_oth1_s_mp                         String?  // mlt_oth1_s_mp
+  tx_mlt_oth1_fc_mp                        String?  // mlt_oth1_fc_mp
+  tx_mlt_oth2                              String?  // mlt_oth2
+  tx_mlt_oth2_s                            String?  // mlt_oth2_s
+  tx_mlt_oth2_fc                           String?  // mlt_oth2_fc
+  tx_mlt_oth2_mp                           String?  // mlt_oth2_mp
+  tx_mlt_oth2_s_mp                         String?  // mlt_oth2_s_mp
+  tx_mlt_oth2_fc_mp                        String?  // mlt_oth2_fc_mp
+  tx_mlt_oth3                              String?  // mlt_oth3
+  tx_mlt_oth3_s                            String?  // mlt_oth3_s
+  tx_mlt_oth3_fc                           String?  // mlt_oth3_fc
+  tx_mlt_oth3_mp                           String?  // mlt_oth3_mp
+  tx_mlt_oth3_s_mp                         String?  // mlt_oth3_s_mp
+  tx_mlt_oth3_fc_mp                        String?  // mlt_oth3_fc_mp
+  tx_mlt_zrmp_70                           String?  // mlt_zrmp_70
+  tx_mlt_zrmp_70_s                         String?  // mlt_zrmp_70_s
+  tx_mlt_zrmp_70_fc                        String?  // mlt_zrmp_70_fc
+  tx_mlt_zrmp_mp                           String?  // mlt_zrmp_mp
+  tx_mlt_zrmp_s_mp                         String?  // mlt_zrmp_s_mp
+  tx_mlt_zrmp_fc_mp                        String?  // mlt_zrmp_fc_mp
+  tx_mlt_zrmp_70_mp                        String?  // mlt_zrmp_70_mp
+  tx_mlt_zrmp_70_s_mp                      String?  // mlt_zrmp_70_s_mp
+  tx_mlt_zrmp_70_fc_mp                     String?  // mlt_zrmp_70_fc_mp
+  tx_mlt_sumz                              String?  // mlt_sumz
+  tx_mlt_sumz_s                            String?  // mlt_sumz_s
+  tx_mlt_sumz_fc                           String?  // mlt_sumz_fc
+  tx_mlt_sumz_mp                           String?  // mlt_sumz_mp
+  tx_mlt_sumz_s_mp                         String?  // mlt_sumz_s_mp
+  tx_mlt_sumz_fc_mp                        String?  // mlt_sumz_fc_mp
+  tx_mlt_loca_psn                          String?  // mlt_loca_psn
+  tx_mlt_loca_s_psn                        String?  // mlt_loca_s_psn
+  tx_mlt_loca_fc_psn                       String?  // mlt_loca_fc_psn
+  tx_mlt_heit_psn                          String?  // mlt_heit_psn
+  tx_mlt_heit_s_psn                        String?  // mlt_heit_s_psn
+  tx_mlt_heit_fc_psn                       String?  // mlt_heit_fc_psn
+  tx_mlt_taba_psn                          String?  // mlt_taba_psn
+  tx_mlt_taba_s_psn                        String?  // mlt_taba_s_psn
+  tx_mlt_taba_fc_psn                       String?  // mlt_taba_fc_psn
+  tx_mlt_hard_psn                          String?  // mlt_hard_psn
+  tx_mlt_hard_s_psn                        String?  // mlt_hard_s_psn
+  tx_mlt_hard_fc_psn                       String?  // mlt_hard_fc_psn
+  tx_mlt_tatb_psn                          String?  // mlt_tatb_psn
+  tx_mlt_tatb_s_psn                        String?  // mlt_tatb_s_psn
+  tx_mlt_tatb_fc_psn                       String?  // mlt_tatb_fc_psn
+  tx_mlt_ovhd_psn                          String?  // mlt_ovhd_psn
+  tx_mlt_ovhd_s_psn                        String?  // mlt_ovhd_s_psn
+  tx_mlt_ovhd_fc_psn                       String?  // mlt_ovhd_fc_psn
+  tx_mlt_oth1_psn                          String?  // mlt_oth1_psn
+  tx_mlt_oth1_s_psn                        String?  // mlt_oth1_s_psn
+  tx_mlt_oth1_fc_psn                       String?  // mlt_oth1_fc_psn
+  tx_mlt_oth2_psn                          String?  // mlt_oth2_psn
+  tx_mlt_oth2_s_psn                        String?  // mlt_oth2_s_psn
+  tx_mlt_oth2_fc_psn                       String?  // mlt_oth2_fc_psn
+  tx_mlt_oth3_psn                          String?  // mlt_oth3_psn
+  tx_mlt_oth3_s_psn                        String?  // mlt_oth3_s_psn
+  tx_mlt_oth3_fc_psn                       String?  // mlt_oth3_fc_psn
+  tx_mlt_sumz_psn                          String?  // mlt_sumz_psn
+  tx_mlt_sumz_s_psn                        String?  // mlt_sumz_s_psn
+  tx_mlt_sumz_fc_psn                       String?  // mlt_sumz_fc_psn
+  tx_ses_49tl_psn                          String?  // ses_49tl_psn
+  tx_ses_pctl_psn_z                        String?  // ses_pctl_psn_z
+  tx_ses_pcfh_tdil_psn                     String?  // ses_pcfh_tdil_psn
+  tx_ses_pctl_tdil_psn                     String?  // ses_pctl_tdil_psn
+  tx_ses_pcfh_tdil_psn_z                   String?  // ses_pcfh_tdil_psn_z
+  tx_ses_pctl_tdil_psn_z                   String?  // ses_pctl_tdil_psn_z
+  tx_mlt_sumz_str                          String?  // mlt_sumz_str
+  tx_mlt_sumz_s_str                        String?  // mlt_sumz_s_str
+  tx_mlt_sumz_fc_str                       String?  // mlt_sumz_fc_str
+  tx_mlt_sumz_mp_str                       String?  // mlt_sumz_mp_str
+  tx_mlt_sumz_s_mp_str                     String?  // mlt_sumz_s_mp_str
+  tx_mlt_sumz_fc_mp_str                    String?  // mlt_sumz_fc_mp_str
+  tx_ses_pcfh                              String?  // ses_pcfh
+  tx_ses_pcsx                              String?  // ses_pcsx
+  tx_ses_pcfc                              String?  // ses_pcfc
+  tx_ses_pctl                              String?  // ses_pctl
+  tx_ses_pcfh_z                            String?  // ses_pcfh_z
+  tx_ses_pcsx_z                            String?  // ses_pcsx_z
+  tx_ses_pcfc_z                            String?  // ses_pcfc_z
+  tx_ses_pctl_z                            String?  // ses_pctl_z
+  tx_ses_pcfh_work                         String?  // ses_pcfh_work
+  tx_ses_pcsx_work                         String?  // ses_pcsx_work
+  tx_ses_pcfc_work                         String?  // ses_pcfc_work
+  tx_ses_pcmp_work                         String?  // ses_pcmp_work
+  tx_ses_pcwo                              String?  // ses_pcwo
+  tx_ses_pcfh_work_tatb                    String?  // ses_pcfh_work_tatb
+  tx_ses_pcsx_work_tatb                    String?  // ses_pcsx_work_tatb
+  tx_ses_pcfc_work_tatb                    String?  // ses_pcfc_work_tatb
+  tx_ses_pcmp_work_tatb                    String?  // ses_pcmp_work_tatb
+  tx_ses_pctl_work_tatb                    String?  // ses_pctl_work_tatb
+  tx_ses_pcwo_ol                           String?  // ses_pcwo_ol
+  tx_ses_prcn_wo                           String?  // ses_prcn_wo
+  tx_ses_pcfh_work_z                       String?  // ses_pcfh_work_z
+  tx_ses_pcfh_work_z_fmul                  String?  // ses_pcfh_work_z_fmul
+  tx_ses_pcsx_work_z                       String?  // ses_pcsx_work_z
+  tx_ses_pcsx_work_z_fmul                  String?  // ses_pcsx_work_z_fmul
+  tx_ses_pcfc_work_z                       String?  // ses_pcfc_work_z
+  tx_ses_pcmp_work_z                       String?  // ses_pcmp_work_z
+  tx_ses_pcwo_z                            String?  // ses_pcwo_z
+  tx_ses_pcfh_work_tatb_z                  String?  // ses_pcfh_work_tatb_z
+  tx_ses_pcfh_work_tatb_z_fmul             String?  // ses_pcfh_work_tatb_z_fmul
+  tx_ses_pcsx_work_tatb_z                  String?  // ses_pcsx_work_tatb_z
+  tx_ses_pcsx_work_tatb_z_fmul             String?  // ses_pcsx_work_tatb_z_fmul
+  tx_ses_pcfc_work_tatb_z                  String?  // ses_pcfc_work_tatb_z
+  tx_ses_pcmp_work_tatb_z                  String?  // ses_pcmp_work_tatb_z
+  tx_ses_pctl_work_tatb_z                  String?  // ses_pctl_work_tatb_z
+  tx_ses_pcmp_tatb_ol_z                    String?  // ses_pcmp_tatb_ol_z
+  tx_ses_pctl_tatb_ol_z                    String?  // ses_pctl_tatb_ol_z
+  tx_ses_pcwo_ol_z                         String?  // ses_pcwo_ol_z
+  tx_ses_prcn_wo_z                         String?  // ses_prcn_wo_z
+  tx_ses_pcwo_new                          String?  // ses_pcwo_new
+  tx_ses_pcwo_afza                         String?  // ses_pcwo_afza
+  tx_ses_pcwo_fznew                        String?  // ses_pcwo_fznew
+  tx_ses_pcwo_kahe                         String?  // ses_pcwo_kahe
+  tx_ses_sum_afkh                          String?  // ses_sum_afkh
+  tx_ses_pcwo_new_z                        String?  // ses_pcwo_new_z
+  tx_ses_pcwo_afza_z                       String?  // ses_pcwo_afza_z
+  tx_ses_pcwo_fznew_z                      String?  // ses_pcwo_fznew_z
+  tx_ses_pcwo_kahe_z                       String?  // ses_pcwo_kahe_z
+  tx_ses_sum_afkh_z                        String?  // ses_sum_afkh_z
+  tx_ses_pcfh_psn                          String?  // ses_pcfh_psn
+  tx_ses_pcsx_psn                          String?  // ses_pcsx_psn
+  tx_ses_pcfc_psn                          String?  // ses_pcfc_psn
+  tx_ses_pcmp_psn                          String?  // ses_pcmp_psn
+  tx_ses_pctl_psn                          String?  // ses_pctl_psn
+  tx_ses_pcfh_psn_z                        String?  // ses_pcfh_psn_z
+  tx_ses_pcsx_psn_z                        String?  // ses_pcsx_psn_z
+  tx_ses_pcfc_psn_z                        String?  // ses_pcfc_psn_z
+  tx_ses_pcmp_psn_z                        String?  // ses_pcmp_psn_z
+  tx_ses_pcfh_sxmb_work                    String?  // ses_pcfh_sxmb_work
+  tx_ses_pcfh_sxmb_work_z                  String?  // ses_pcfh_sxmb_work_z
+  tx_ses_pctl_work_tatb_z_beduneBalasari   String?  // ses_pctl_work_tatb_z_beduneBalasari
+  tx_ses_pcfh_work_tatb_z_bedunebalasari   String?  // ses_pcfh_work_tatb_z_bedunebalasari
+  tx_ses_pcsx_work_tatb_z_bedunebalasari   String?  // ses_pcsx_work_tatb_z_bedunebalasari
+  tx_ses_pcfc_work_tatb_z_bedunebalasari   String?  // ses_pcfc_work_tatb_z_bedunebalasari
+  tx_ses_pcmp_work_tatb_z_bedunebalasari   String?  // ses_pcmp_work_tatb_z_bedunebalasari
+  tx_ses_pcwo_HamlItm                      String?  // ses_pcwo_HamlItm
+  tx_ses_pcwo_z_HamlItm                    String?  // ses_pcwo_z_HamlItm
+  tx_ses_prwo                              String?  // ses_prwo
+  tx_ses_prwo_z                            String?  // ses_prwo_z
+  tx_ses_fmulAfzKshJamJabriKsh_Z           String?  // ses_fmulAfzKshJamJabriKsh_Z
+  tx_ses_fmulAfzKshJamJabriAfza_Z          String?  // ses_fmulAfzKshJamJabriAfza_Z
+  tx_mlt_ityId                             String?  // mlt_ityId
+  tx_mlt_Prnuse                            String?  // mlt_Prnuse
+  tx_mlt_Prname                            String?  // mlt_Prname
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_mult")
+  @@index([importId])
+}
+
+model Brv_grop {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_grp_link_proj                         String?  // grp_link_proj
+  tx_grp_nufh                              String?  // grp_nufh
+  tx_grp_id                                String?  // grp_id
+  tx_grp_nusv                              String?  // grp_nusv
+  tx_grp_type                              String?  // grp_type
+  tx_grp_grop                              String?  // grp_grop
+  tx_grp_rad                               String?  // grp_rad
+  tx_grp_HamlCalc1R                        String?  // grp_HamlCalc1R
+  tx_grp_fullDesc                          String?  // grp_fullDesc
+  tx_grp_NoMahdoodiat                      String?  // grp_NoMahdoodiat
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_grop")
+  @@index([importId])
+}
+
+model Brv_mogs {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_mog_link_proj                         String?  // mog_link_proj
+  tx_mog_id                                String?  // mog_id
+  tx_mog_nusv                              String?  // mog_nusv
+  tx_mog_type                              String?  // mog_type
+  tx_mog_name                              String?  // mog_name
+  tx_mog_rad                               String?  // mog_rad
+  tx_mog_zrib                              String?  // mog_zrib
+  tx_mog_sj_ok                             String?  // mog_sj_ok
+  tx_mog_IsBold                            String?  // mog_IsBold
+  tx_mog_isColor                           String?  // mog_isColor
+  tx_mog_link_previous                     String?  // mog_link_previous
+  tx_mog_type_previous                     String?  // mog_type_previous
+  tx_mog_nusj                              String?  // mog_nusj
+  tx_mog_dscr                              String?  // mog_dscr
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_mogs")
+  @@index([importId])
+}
+
+model Brv_fhbh {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_fbh_link_proj                         String?  // fbh_link_proj
+  tx_fbh_nufh                              String?  // fbh_nufh
+  tx_fbh_nuse                              String?  // fbh_nuse
+  tx_fbh_cofh                              String?  // fbh_cofh
+  tx_fbh_nusv                              String?  // fbh_nusv
+  tx_fbh_type                              String?  // fbh_type
+  tx_fbh_astr                              String?  // fbh_astr
+  tx_fbh_fact                              String?  // fbh_fact
+  tx_fbh_mbgh                              String?  // fbh_mbgh
+  tx_fbh_desc                              String?  // fbh_desc
+  tx_fbh_abst                              String?  // fbh_abst
+  tx_fbh_unit                              String?  // fbh_unit
+  tx_fbh_tyun                              String?  // fbh_tyun
+  tx_fbh_pcun                              String?  // fbh_pcun
+  tx_fbh_pcun_fmul                         String?  // fbh_pcun_fmul
+  tx_fbh_pcun_ana_net                      String?  // fbh_pcun_ana_net
+  tx_fbh_pcun_ana_amar                     String?  // fbh_pcun_ana_amar
+  tx_fbh_pcun_ana_rooz                     String?  // fbh_pcun_ana_rooz
+  tx_fbh_notd                              String?  // fbh_notd
+  tx_fbh_ader                              String?  // fbh_ader
+  tx_fbh_pcun_ana_zrib                     String?  // fbh_pcun_ana_zrib
+  tx_fbh_prja                              String?  // fbh_prja
+  tx_fbh_yrja                              String?  // fbh_yrja
+  tx_fbh_Monja                             String?  // fbh_Monja
+  tx_fbh_prCofh                            String?  // fbh_prCofh
+  tx_fbh_FromBaseReal                      String?  // fbh_FromBaseReal
+  tx_fbh_NoPcunFromBase                    String?  // fbh_NoPcunFromBase
+  tx_fbh_NuseForSh                         String?  // fbh_NuseForSh
+  tx_fbh_tose                              String?  // fbh_tose
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_fhbh")
+  @@index([importId])
+}
+
+model Brv_rzmt {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_rmt_link_proj                         String?  // rmt_link_proj
+  tx_rmt_nusv                              String?  // rmt_nusv
+  tx_rmt_type                              String?  // rmt_type
+  tx_rmt_id                                String?  // rmt_id
+  tx_rmt_nufh                              String?  // rmt_nufh
+  tx_rmt_nuse                              String?  // rmt_nuse
+  tx_rmt_cofh                              String?  // rmt_cofh
+  tx_rmt_link_mog                          String?  // rmt_link_mog
+  tx_rmt_fare                              String?  // rmt_fare
+  tx_rmt_rad                               String?  // rmt_rad
+  tx_rmt_raj                               String?  // rmt_raj
+  tx_rmt_sumj                              String?  // rmt_sumj
+  tx_rmt_sumt                              String?  // rmt_sumt
+  tx_rmt_summ                              String?  // rmt_summ
+  tx_rmt_coac                              String?  // rmt_coac
+  tx_rmt_is_equal_ader                     String?  // rmt_is_equal_ader
+  tx_rmt_mpwk                              String?  // rmt_mpwk
+  tx_rmt_sooratjalase_view                 String?  // rmt_sooratjalase_view
+  tx_rmt_sooratjalase_view1                String?  // rmt_sooratjalase_view1
+  tx_rmt_sooratjalase_view2                String?  // rmt_sooratjalase_view2
+  tx_rmt_from_haml                         String?  // rmt_from_haml
+  tx_rmt_dsam                              String?  // rmt_dsam
+  tx_rmt_weit                              String?  // rmt_weit
+  tx_rmt_numo                              String?  // rmt_numo
+  tx_rmt_tool                              String?  // rmt_tool
+  tx_rmt_arz                               String?  // rmt_arz
+  tx_rmt_heit                              String?  // rmt_heit
+  tx_rmt_dsmo                              String?  // rmt_dsmo
+  tx_rmt_tool_fmul                         String?  // rmt_tool_fmul
+  tx_rmt_arz_fmul                          String?  // rmt_arz_fmul
+  tx_rmt_heit_fmul                         String?  // rmt_heit_fmul
+  tx_rmt_weit_fmul                         String?  // rmt_weit_fmul
+  tx_rmt_haml_mog                          String?  // rmt_haml_mog
+  tx_rmt_link_previous                     String?  // rmt_link_previous
+  tx_rmt_type_previous                     String?  // rmt_type_previous
+  tx_rmt_sumj_fmul                         String?  // rmt_sumj_fmul
+  tx_rmt_numo_fmul                         String?  // rmt_numo_fmul
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_rzmt")
+  @@index([importId])
+}
+
+model Brv_ader {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_adr_link_proj                         String?  // adr_link_proj
+  tx_adr_nufh                              String?  // adr_nufh
+  tx_adr_nuse_moth                         String?  // adr_nuse_moth
+  tx_adr_nuse                              String?  // adr_nuse
+  tx_adr_cofh_moth                         String?  // adr_cofh_moth
+  tx_adr_cofh                              String?  // adr_cofh
+  tx_adr_nusv                              String?  // adr_nusv
+  tx_adr_type                              String?  // adr_type
+  tx_adr_fmul_tbdl                         String?  // adr_fmul_tbdl
+  tx_adr_pric_or_quan                      String?  // adr_pric_or_quan
+  tx_adr_param_dscr                        String?  // adr_param_dscr
+  tx_adr_mola                              String?  // adr_mola
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_ader")
+  @@index([importId])
+}
+
+model Brv_khmt {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_kmt_link_proj                         String?  // kmt_link_proj
+  tx_kmt_nusv                              String?  // kmt_nusv
+  tx_kmt_type                              String?  // kmt_type
+  tx_kmt_id                                String?  // kmt_id
+  tx_kmt_nufh                              String?  // kmt_nufh
+  tx_kmt_nuse                              String?  // kmt_nuse
+  tx_kmt_cofh                              String?  // kmt_cofh
+  tx_kmt_nagl_rzmt                         String?  // kmt_nagl_rzmt
+  tx_kmt_link_mog                          String?  // kmt_link_mog
+  tx_kmt_rad                               String?  // kmt_rad
+  tx_kmt_raj                               String?  // kmt_raj
+  tx_kmt_sumj                              String?  // kmt_sumj
+  tx_kmt_sujz                              String?  // kmt_sujz
+  tx_kmt_sumt                              String?  // kmt_sumt
+  tx_kmt_coac                              String?  // kmt_coac
+  tx_kmt_is_equal_ader                     String?  // kmt_is_equal_ader
+  tx_kmt_mpwk                              String?  // kmt_mpwk
+  tx_kmt_nusj                              String?  // kmt_nusj
+  tx_kmt_dtsj                              String?  // kmt_dtsj
+  tx_kmt_From_Haml                         String?  // kmt_From_Haml
+  tx_kmt_link_previous                     String?  // kmt_link_previous
+  tx_kmt_type_previous                     String?  // kmt_type_previous
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_khmt")
+  @@index([importId])
+}
+
+model Brv_bgml {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_bgm_link_proj                         String?  // bgm_link_proj
+  tx_bgm_nusv                              String?  // bgm_nusv
+  tx_bgm_type                              String?  // bgm_type
+  tx_bgm_id                                String?  // bgm_id
+  tx_bgm_nufh                              String?  // bgm_nufh
+  tx_bgm_cofh                              String?  // bgm_cofh
+  tx_bgm_coac                              String?  // bgm_coac
+  tx_bgm_rad                               String?  // bgm_rad
+  tx_bgm_nuse                              String?  // bgm_nuse
+  tx_bgm_quan                              String?  // bgm_quan
+  tx_bgm_qust                              String?  // bgm_qust
+  tx_bgm_pcal                              String?  // bgm_pcal
+  tx_bgm_pcal_psn                          String?  // bgm_pcal_psn
+  tx_bgm_pcst                              String?  // bgm_pcst
+  tx_bgm_pcst_psn                          String?  // bgm_pcst_psn
+  tx_bgm_prcn                              String?  // bgm_prcn
+  tx_bgm_swf2                              String?  // bgm_swf2
+  tx_bgm_qufz                              String?  // bgm_qufz
+  tx_bgm_pcfz                              String?  // bgm_pcfz
+  tx_bgm_qukh                              String?  // bgm_qukh
+  tx_bgm_pckh                              String?  // bgm_pckh
+  tx_bgm_IsAnalyzed                        String?  // bgm_IsAnalyzed
+  tx_bgm_is_equal_ader                     String?  // bgm_is_equal_ader
+  tx_bgm_mpwk                              String?  // bgm_mpwk
+  tx_bgm_qust_ol                           String?  // bgm_qust_ol
+  tx_bgm_pcst_ol                           String?  // bgm_pcst_ol
+  tx_bgm_no_tjhz                           String?  // bgm_no_tjhz
+  tx_bgm_no_tatbigh_in_cnv                 String?  // bgm_no_tatbigh_in_cnv
+  tx_bgm_CreatInBgml                       String?  // bgm_CreatInBgml
+  tx_bgm_From_Haml                         String?  // bgm_From_Haml
+  tx_bgm_link_previous                     String?  // bgm_link_previous
+  tx_bgm_type_previous                     String?  // bgm_type_previous
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_bgml")
+  @@index([importId])
+}
+
+model Brv_hmbs {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_hmb_link_proj                         String?  // hmb_link_proj
+  tx_hmb_nufh                              String?  // hmb_nufh
+  tx_hmb_nuse                              String?  // hmb_nuse
+  tx_hmb_cofh                              String?  // hmb_cofh
+  tx_hmb_link_grop                         String?  // hmb_link_grop
+  tx_hmb_dscr                              String?  // hmb_dscr
+  tx_hmb_nusv                              String?  // hmb_nusv
+  tx_hmb_type                              String?  // hmb_type
+  tx_hmb_zar1                              String?  // hmb_zar1
+  tx_hmb_sumz                              String?  // hmb_sumz
+  tx_hmb_checked                           String?  // hmb_checked
+  tx_hmb_zar3                              String?  // hmb_zar3
+  tx_hmb_zar2                              String?  // hmb_zar2
+  tx_hmb_dsz2                              String?  // hmb_dsz2
+  tx_hmb_zar4                              String?  // hmb_zar4
+  tx_hmb_dsz4                              String?  // hmb_dsz4
+  tx_hmb_dsz1                              String?  // hmb_dsz1
+  tx_hmb_dsz3                              String?  // hmb_dsz3
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_hmbs")
+  @@index([importId])
+}
+
+model Brv_dstb {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_dsb_link_proj                         String?  // dsb_link_proj
+  tx_dsb_link_grop                         String?  // dsb_link_grop
+  tx_dsb_nufh                              String?  // dsb_nufh
+  tx_dsb_frkm                              String?  // dsb_frkm
+  tx_dsb_nusv                              String?  // dsb_nusv
+  tx_dsb_type                              String?  // dsb_type
+  tx_dsb_nuse                              String?  // dsb_nuse
+  tx_dsb_cofh                              String?  // dsb_cofh
+  tx_dsb_tokm                              String?  // dsb_tokm
+  tx_dsb_zrib                              String?  // dsb_zrib
+  tx_dsb_khaki_onvan                       String?  // dsb_khaki_onvan
+  tx_dsb_khaki_zarib                       String?  // dsb_khaki_zarib
+  tx_dsb_sheni_onvan                       String?  // dsb_sheni_onvan
+  tx_dsb_sheni_zarib                       String?  // dsb_sheni_zarib
+  tx_dsb_other_onvan                       String?  // dsb_other_onvan
+  tx_dsb_other_zarib                       String?  // dsb_other_zarib
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_dstb")
+  @@index([importId])
+}
+
+model Brv_hmpy {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_hmp_link_proj                         String?  // hmp_link_proj
+  tx_hmp_nufh                              String?  // hmp_nufh
+  tx_hmp_nuse                              String?  // hmp_nuse
+  tx_hmp_cofh                              String?  // hmp_cofh
+  tx_hmp_link_grop                         String?  // hmp_link_grop
+  tx_hmp_dscr                              String?  // hmp_dscr
+  tx_hmp_nusv                              String?  // hmp_nusv
+  tx_hmp_type                              String?  // hmp_type
+  tx_hmp_rad                               String?  // hmp_rad
+  tx_hmp_quan                              String?  // hmp_quan
+  tx_hmp_totl                              String?  // hmp_totl
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_hmpy")
+  @@index([importId])
+}
+
+model Brv_hmpy_rzmt {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_hmp_link_proj                         String?  // hmp_link_proj
+  tx_hmp_nufh                              String?  // hmp_nufh
+  tx_hmp_nuse                              String?  // hmp_nuse
+  tx_hmp_cofh                              String?  // hmp_cofh
+  tx_hmp_link_grop                         String?  // hmp_link_grop
+  tx_hmp_dscr                              String?  // hmp_dscr
+  tx_hmp_link_mog                          String?  // hmp_link_mog
+  tx_hmp_nusv                              String?  // hmp_nusv
+  tx_hmp_type                              String?  // hmp_type
+  tx_hmp_rad                               String?  // hmp_rad
+  tx_hmp_quan                              String?  // hmp_quan
+  tx_hmp_totl                              String?  // hmp_totl
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_hmpy_rzmt")
+  @@index([importId])
+}
+
+model Brv_dstn_main {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_dsn_link_proj                         String?  // dsn_link_proj
+  tx_dsn_id                                String?  // dsn_id
+  tx_dsn_nusv                              String?  // dsn_nusv
+  tx_dsn_type                              String?  // dsn_type
+  tx_dsn_nufh                              String?  // dsn_nufh
+  tx_dsn_link_grop                         String?  // dsn_link_grop
+  tx_dsn_sum_m                             String?  // dsn_sum_m
+  tx_dsn_dstn                              String?  // dsn_dstn
+  tx_dsn_sum_i                             String?  // dsn_sum_i
+  tx_dsn_fromto                            String?  // dsn_fromto
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_dstn_main")
+  @@index([importId])
+}
+
+model Brv_dstn_fromto {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_dsf_link_proj                         String?  // dsf_link_proj
+  tx_dsf_link_grop                         String?  // dsf_link_grop
+  tx_dsf_link_main                         String?  // dsf_link_main
+  tx_dsf_nufh                              String?  // dsf_nufh
+  tx_dsf_frkm                              String?  // dsf_frkm
+  tx_dsf_nusv                              String?  // dsf_nusv
+  tx_dsf_type                              String?  // dsf_type
+  tx_dsf_cofh                              String?  // dsf_cofh
+  tx_dsf_nuse                              String?  // dsf_nuse
+  tx_dsf_tokm                              String?  // dsf_tokm
+  tx_dsf_zrib                              String?  // dsf_zrib
+  tx_dsf_sum_i                             String?  // dsf_sum_i
+  tx_dsf_sum_k_i                           String?  // dsf_sum_k_i
+  tx_dsf_Formul                            String?  // dsf_Formul
+  tx_dsf_tokmReal                          String?  // dsf_tokmReal
+  tx_dsf_type1_km                          String?  // dsf_type1_km
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_dstn_fromto")
+  @@index([importId])
+}
+
+model Brv_dstn_main_rzmt {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_dsn_link_proj                         String?  // dsn_link_proj
+  tx_dsn_link_mog                          String?  // dsn_link_mog
+  tx_dsn_id                                String?  // dsn_id
+  tx_dsn_nusv                              String?  // dsn_nusv
+  tx_dsn_type                              String?  // dsn_type
+  tx_dsn_nufh                              String?  // dsn_nufh
+  tx_dsn_link_grop                         String?  // dsn_link_grop
+  tx_dsn_sum_m                             String?  // dsn_sum_m
+  tx_dsn_dstn                              String?  // dsn_dstn
+  tx_dsn_sum_i                             String?  // dsn_sum_i
+  tx_dsn_fromto                            String?  // dsn_fromto
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_dstn_main_rzmt")
+  @@index([importId])
+}
+
+model Brv_dstn_fromto_rzmt {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_dsf_link_proj                         String?  // dsf_link_proj
+  tx_dsf_link_main                         String?  // dsf_link_main
+  tx_dsf_link_mog                          String?  // dsf_link_mog
+  tx_dsf_link_grop                         String?  // dsf_link_grop
+  tx_dsf_nufh                              String?  // dsf_nufh
+  tx_dsf_frkm                              String?  // dsf_frkm
+  tx_dsf_nusv                              String?  // dsf_nusv
+  tx_dsf_type                              String?  // dsf_type
+  tx_dsf_cofh                              String?  // dsf_cofh
+  tx_dsf_nuse                              String?  // dsf_nuse
+  tx_dsf_tokm                              String?  // dsf_tokm
+  tx_dsf_zrib                              String?  // dsf_zrib
+  tx_dsf_sum_i                             String?  // dsf_sum_i
+  tx_dsf_sum_k_i                           String?  // dsf_sum_k_i
+  tx_dsf_Formul                            String?  // dsf_Formul
+  tx_dsf_type1_km                          String?  // dsf_type1_km
+  tx_dsf_tokmReal                          String?  // dsf_tokmReal
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_dstn_fromto_rzmt")
+  @@index([importId])
+}
+
+model Brv_sorc_all {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_src_link_proj                         String?  // src_link_proj
+  tx_src_nusv                              String?  // src_nusv
+  tx_src_type                              String?  // src_type
+  tx_src_id                                String?  // src_id
+  tx_src_grop                              String?  // src_grop
+  tx_src_dscr                              String?  // src_dscr
+  tx_src_unit                              String?  // src_unit
+  tx_src_pcun_net                          String?  // src_pcun_net
+  tx_src_pcun_amar                         String?  // src_pcun_amar
+  tx_src_pcun_rooz                         String?  // src_pcun_rooz
+  tx_src_code_amel                         String?  // src_code_amel
+  tx_src_Tajmi                             String?  // src_Tajmi
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_sorc_all")
+  @@index([importId])
+}
+
+model Brv_sorc {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_src_link_proj                         String?  // src_link_proj
+  tx_src_link_sorclist                     String?  // src_link_sorclist
+  tx_src_nufh                              String?  // src_nufh
+  tx_src_nusv                              String?  // src_nusv
+  tx_src_type                              String?  // src_type
+  tx_src_pcun_net                          String?  // src_pcun_net
+  tx_src_date_amar                         String?  // src_date_amar
+  tx_src_Tajmi                             String?  // src_Tajmi
+  tx_src_pcun_amar                         String?  // src_pcun_amar
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_sorc")
+  @@index([importId])
+}
+
+model Brv_nmmhb {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_nmb_link_proj                         String?  // nmb_link_proj
+  tx_nmb_link_sorclist                     String?  // nmb_link_sorclist
+  tx_nmb_nufh                              String?  // nmb_nufh
+  tx_nmb_nuse                              String?  // nmb_nuse
+  tx_nmb_cofh                              String?  // nmb_cofh
+  tx_nmb_nusv                              String?  // nmb_nusv
+  tx_nmb_type                              String?  // nmb_type
+  tx_nmb_rad                               String?  // nmb_rad
+  tx_nmb_quan                              String?  // nmb_quan
+  tx_nmb_zrib                              String?  // nmb_zrib
+  tx_nmb_Tajmi                             String?  // nmb_Tajmi
+  tx_nmb_megias                            String?  // nmb_megias
+  tx_nmb_quan_kol                          String?  // nmb_quan_kol
+  tx_nmb_quan_kol_Meghyas                  String?  // nmb_quan_kol_Meghyas
+  tx_nmb_quan_nft                          String?  // nmb_quan_nft
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_nmmhb")
+  @@index([importId])
+}
+
+model Brv_Jobrankosoorat {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_tkr_link_proj                         String?  // tkr_link_proj
+  tx_tkr_nusv                              String?  // tkr_nusv
+  tx_tkr_type                              String?  // tkr_type
+  tx_tkr_id                                String?  // tkr_id
+  tx_tkr_rad                               String?  // tkr_rad
+  tx_tkr_name                              String?  // tkr_name
+  tx_tkr_prcn                              String?  // tkr_prcn
+  tx_tkr_PlusOrMinec                       String?  // tkr_PlusOrMinec
+  tx_Tkr_Mablaghi                          String?  // Tkr_Mablaghi
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_Jobrankosoorat")
+  @@index([importId])
+}
+
+model Brv_Arzkosoorat {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_tkr_link_proj                         String?  // tkr_link_proj
+  tx_tkr_nusv                              String?  // tkr_nusv
+  tx_tkr_type                              String?  // tkr_type
+  tx_tkr_id                                String?  // tkr_id
+  tx_tkr_rad                               String?  // tkr_rad
+  tx_tkr_name                              String?  // tkr_name
+  tx_tkr_prcn                              String?  // tkr_prcn
+  tx_tkr_PlusOrMinec                       String?  // tkr_PlusOrMinec
+  tx_Tkr_Mablaghi                          String?  // Tkr_Mablaghi
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_Arzkosoorat")
+  @@index([importId])
+}
+
+model Brv_Tadilkosorat {
+  id        String   @id @default(cuid())
+  importId  String
+  rowOrder  Int
+
+  tx_Tkr_link_proj                         String?  // Tkr_link_proj
+  tx_Tkr_nusv                              String?  // Tkr_nusv
+  tx_Tkr_type                              String?  // Tkr_type
+  tx_Tkr_id                                String?  // Tkr_id
+  tx_Tkr_rad                               String?  // Tkr_rad
+  tx_Tkr_name                              String?  // Tkr_name
+  tx_Tkr_prcn                              String?  // Tkr_prcn
+  tx_Tkr_PlusOrMinec                       String?  // Tkr_PlusOrMinec
+  tx_Tkr_Mablaghi                          String?  // Tkr_Mablaghi
+
+  rawJson   String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("brv_Tadilkosorat")
+  @@index([importId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  موتور کارتابل و تأییدات (Workflow Engine)
+// ═══════════════════════════════════════════════════════════
+
+model WorkflowTemplate {
+  id              String   @id @default(cuid())
+  code            String   @unique // PAYMENT_STATEMENT | ADJUSTMENT | MINUTES | WORK_ORDER
+  title           String
+  createdAt       DateTime @default(now())
+
+  steps           ApprovalStep[]
+}
+
+model WorkflowInstance {
+  id              String   @id @default(cuid())
+  projectId       String
+  templateCode    String
+  entityType      String   // PAYMENT | ADJUSTMENT | METERING
+  entityId        String
+  state           String   @default("DRAFT")
+  currentStep     Int      @default(0)
+  createdById     String
+  createdByName   String
+  lockedAt        DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  actions         WorkflowAction[]
+
+  @@index([projectId])
+  @@index([entityType, entityId])
+}
+
+model WorkflowAction {
+  id              String   @id @default(cuid())
+  instanceId      String
+  actorId         String
+  actorName       String
+  actorPartyType  String   // EMPLOYER | CONSULTANT | CONTRACTOR
+  action          String   // SUBMIT | REVIEW | APPROVE | RETURN | REJECT | LOCK | REOPEN
+  note            String?
+  attachmentsJson String   @default("[]")
+  createdAt       DateTime @default(now())
+
+  instance        WorkflowInstance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@index([instanceId])
+}
+
+model ApprovalStep {
+  id                  String   @id @default(cuid())
+  templateId          String
+  stepOrder           Int
+  partyType           String   // EMPLOYER | CONSULTANT | CONTRACTOR
+  requiredRole        String?
+  actionLabel         String
+  canEdit             Boolean  @default(false)
+  canReturn           Boolean  @default(false)
+  canApprove          Boolean  @default(false)
+
+  template            WorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  چت، مکاتبات و کامنت‌ها (Communication)
+// ═══════════════════════════════════════════════════════════
+
+model ProjectChannel {
+  id              String   @id @default(cuid())
+  projectId       String
+  title           String
+  type            String   // GENERAL | TECHNICAL | PAYMENT | ADJUSTMENT | SITE | OFFICIAL | ENTITY_THREAD
+  entityType      String?  // PAYMENT | ADJUSTMENT | etc.
+  entityId        String?
+  visibility      String   @default("ALL_PARTIES") // ALL_PARTIES | EMPLOYER_CONSULTANT | CONSULTANT_CONTRACTOR | INTERNAL_PARTY
+  createdAt       DateTime @default(now())
+
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  members         ChannelMember[]
+  messages        Message[]
+
+  @@index([projectId])
+  @@index([entityType, entityId])
+}
+
+model ChannelMember {
+  id          String   @id @default(cuid())
+  channelId   String
+  userId      String
+  role        String   @default("MEMBER") // OWNER | MEMBER | READONLY
+  createdAt   DateTime @default(now())
+
+  channel     ProjectChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, userId])
+  @@index([channelId])
+}
+
+model Message {
+  id              String   @id @default(cuid())
+  channelId       String
+  senderId        String
+  senderName      String
+  body            String
+  attachmentIdsJson String @default("[]")
+  replyToId       String?
+  createdAt       DateTime @default(now())
+  editedAt        DateTime?
+
+  channel         ProjectChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  readReceipts    MessageReadReceipt[]
+
+  @@index([channelId])
+  @@index([senderId])
+}
+
+model MessageReadReceipt {
+  id          String   @id @default(cuid())
+  messageId   String
+  userId      String
+  readAt      DateTime @default(now())
+
+  message     Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+}
+
+model Letter {
+  id              String   @id @default(cuid())
+  projectId       String
+  fromPartyId     String
+  toPartyId       String
+  subject         String
+  body            String
+  letterNo        String?
+  letterDate      DateTime?
+  status          String   @default("DRAFT") // DRAFT | SENT | RECEIVED | ANSWERED | ARCHIVED
+  attachmentIdsJson String @default("[]")
+  createdAt       DateTime @default(now())
+
+  project         Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fromParty       ProjectParty @relation("LetterFrom", fields: [fromPartyId], references: [id])
+  toParty         ProjectParty @relation("LetterTo", fields: [toPartyId], references: [id])
+
+  @@index([projectId])
+  @@index([status])
+}
+
+model Document {
+  id                String   @id @default(cuid())
+  projectId         String
+  title             String
+  type              String   // CONTRACT | DRAWING | MINUTES | WORK_ORDER | PAYMENT | ADJUSTMENT | ATTACHMENT
+  entityType        String?
+  entityId          String?
+  currentVersionId  String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  versions          DocumentVersion[]
+
+  @@index([projectId])
+  @@index([type])
+}
+
+model DocumentVersion {
+  id            String   @id @default(cuid())
+  documentId    String
+  versionNo     Int      @default(1)
+  fileUrl       String
+  fileName      String
+  fileSizeBytes Int      @default(0)
+  uploadedById  String?
+  uploadedByName String?
+  createdAt     DateTime @default(now())
+
+  document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+}

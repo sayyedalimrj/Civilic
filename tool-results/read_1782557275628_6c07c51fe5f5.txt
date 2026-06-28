@@ -1,0 +1,212 @@
+     1→---
+     2→Task ID: 10
+     3→Agent: full-stack-developer
+     4→Task: Build Detail BOQ + Summary BOQ + Financial Sheet views
+     5→
+     6→Work Log:
+     7→- Read project context: worklog.md (not yet present), src/lib/store.ts, src/lib/fa.ts, src/lib/calc/cascade.ts, src/app/api/projects/[id]/route.ts, src/app/api/projects/[id]/detail-boq/route.ts, src/app/api/projects/[id]/financial-sheet/route.ts, src/app/api/base-data/price-lists/[listId]/items/route.ts, prisma/schema.prisma, src/components/views/dashboard-view.tsx (for style conventions), shadcn ui components (table/dialog/select/form/badge/button/input/skeleton/alert/toast) and src/hooks/use-toast.ts.
+     8→- Created `src/components/views/project/detail-boq-view.tsx` (use client): editable BOQ table with کد/شرح/واحد/مقدار/عملیات columns, max-h-[70vh] overflow-y-auto with sticky header, "افزودن ردیف" dialog (code/description/unit/quantity + price-list-item picker), inline `QuantityCell` with 800ms debounce and Persian input parsing, edit & delete actions with confirm, price-list picker loaded from `/api/base-data/price-lists/[listId]/items`, cascade info toasts (summaryBoqUpdated / financialSheetTotal / chaptersUpdated) using `useToast`, loading skeleton + empty states + amber cascade info banner + footer totals.
+     9→- Created `src/components/views/project/financial-sheet-view.tsx` (use client): full table with کد/شرح/واحد/مقدار/قیمت واحد/مبلغ کل/فصل/مرجع/ستاره/ابزار columns, sticky header + sticky amber-gradient total footer (`faMoney` + `faRial`), star toggle button (when starred the unit price becomes an inline editable amber chip), optimistic unit price mutation via `onMutate`/`onError` rollback, `ReferenceToggle` cycle button (NET/STATS/DAILY with colored badges), `ChapterSelector` (1-7 with titles), `AnalysisDialog` showing 4-factor breakdown (labor/equipment/material/transport) parsed from item.analysis JSON + recharts mini `BarChart` + 4 colored factor cards, `DescendingPriceDialog` using `descendingPriceAdjustment` from cascade with adjustable threshold, starred-count badge in header, loading skeleton + empty states.
+    10→- Created `src/components/views/project/summary-boq-view.tsx` (use client): read-only aggregated table with کد/شرح/واحد/مقدار کل columns, sticky header, amber info banner explaining auto-compute from detail BOQ, "بازمحاسبه" button that invalidates `["project", id]` query and refetches (with toast), footer showing unique code count + total quantity, loading skeleton + empty states (including a CTA to recompute when detail rows exist but summary is empty).
+    11→- All three files: RTL Persian, Tailwind amber/orange/slate theme consistent with globals.css, `'use client'` directive, `@/` import aliases, relative fetch paths only, `useAppStore` for selectedProjectId, TanStack Query keyed `["project", selectedProjectId]`, `faNum`/`faMoney`/`toFa`/`faRial` for Persian numerals everywhere, minimum 36px (h-9) button/input heights, tabular-nums text-left numeric cells, custom scrollbar (inherited from globals.css).
+    12→- Ran `bun run lint` → EXIT=0 (clean, no warnings/errors). Verified `npx tsc --noEmit` shows zero errors in the three new view files (pre-existing errors in unrelated files remain untouched per task constraints — no API route / page.tsx / globals.css / layout.tsx modified).
+    13→
+    14→Stage Summary:
+    15→- Three view components produced under `src/components/views/project/`:
+    16→  - `detail-boq-view.tsx` — editable rizmétre table with add/edit dialog, price-list picker, debounced inline quantity editing, cascade toasts.
+    17→  - `financial-sheet-view.tsx` — bargé-mali table with star toggle, optimistic unit price editing, reference/chapter selectors, analysis dialog (recharts bar chart + 4-factor breakdown), descending-price (بخشنامه ۴۹۵۱) dialog, sticky total footer.
+    18→  - `summary-boq-view.tsx` — read-only aggregated table with info banner + recompute button.
+    19→- All components consume `useAppStore` for `selectedProjectId` and share the `["project", id]` TanStack Query key so mutations in any view cascade and refresh the others.
+    20→- ESLint passes cleanly. No new routes, no API edits, no layout/globals/page.tsx changes.
+    21→- Issue note: pre-existing TypeScript errors in other agents' files (`src/lib/fa.ts` const-assign in `toJalali`, `src/components/app-sidebar.tsx` invalid `Bridge` icon import + argument type, `src/components/views/dashboard-view.tsx` `indicatorClassName` prop, `src/app/api/projects/[id]/route.ts` + `detail-boq/route.ts` Prisma `priceList` include typing) were NOT touched per task constraints; they are out of scope for Task 10.
+    22→
+    23→---
+    24→Task ID: 11
+    25→Agent: full-stack-developer
+    26→Task: Build Chapters + Payments + Adjustment + Reports views
+    27→
+    28→Work Log:
+    29→- Read worklog.md (Task 10 context), src/components/views/project/detail-boq-view.tsx and financial-sheet-view.tsx for style/pattern conventions, src/lib/store.ts, src/lib/fa.ts, src/lib/calc/cascade.ts, src/app/api/projects/[id]/route.ts, src/app/api/projects/[id]/payments/route.ts, src/app/api/projects/[id]/payments/[period]/items/route.ts, src/app/api/base-data/{indices,materials,distances}/route.ts, src/app/api/reports/project/[id]/route.ts, src/app/api/tenant/route.ts, prisma/schema.prisma, plus shadcn/ui accordion, sheet, slider, tabs, collapsible, card, dialog, select, badge.
+    30→- Created `src/components/views/project/chapters-view.tsx` (use client): read-only chapter distribution. Summary card with horizontal stacked bar chart (recharts `BarChart layout="vertical"`) showing amount per chapter with custom amber color palette; 8-color palette (`CHAPTER_COLORS`); contract-amount comparison with diff badge; chapter grid with large amber chapter number, title, `faMoney` amount, `faPct` percent, progress bar (`progressColor`); special "تجهیز کارگاه" badge + workshopMode display for `isWorkshopSetup`; `Accordion` info section explaining بخشنامه ۷۶۵۷۴ and بخشنامه ۴۹۵۱ (the latter with conditional HardHat alert when workshop chapter exists); "بازمحاسبه" button via `qc.invalidateQueries` + `refetch` with toast; loading skeleton + empty states (CTA to recompute).
+    31→- Created `src/components/views/project/payments-view.tsx` (use client): payment periods management. Header with refresh + "ایجاد صورت‌وضعیت جدید" button (POST to `/api/projects/[id]/payments`); 3 summary mini-cards (count, total executed, contract amount); grid of period cards each with status badge (DRAFT/SUBMITTED/APPROVED with colored badges + icons), period number, createdAt (fa-IR date), 4 mini-stats (executed, netPayable, guarantee, insurance+tax), progress bar against contract amount, "مشاهده‌ی جزئیات و ثبت اجرا" button. Detail opens a `Sheet` side="left" with `sm:max-w-4xl w-full` containing: amber-gradient summary panel with 4 cells (executed, guarantee, insurance, tax — colored neg/default), separator, netPayable headline + adjustedSum secondary; info alert about deduction rates being display-only; payment items table (code, description, unit, totalQty, percent-executed with inline Slider + small Input (debounced 800ms via `parseFaNumber`), executedQty, executedAmount, adjustedAmount with "تعدیل" badge); sticky footer totals. Mutation uses optimistic `onMutate` recomputing payment totals locally + `onSettled` invalidate + cascade toast showing netPayable/guarantee/tax. Min 36px (`h-9`) interactive elements, tabular-nums text-left numeric cells.
+    32→- Created `src/components/views/project/adjustment-view.tsx` (use client): three-tab calculator via `Tabs`. (1) **تعدیل صورت‌وضعیت:** period `Select`, indices fetched from `/api/base-data/indices` filtered by `project.priceList.discipline` or "کلی"; per-item table with `Switch` toggle "اعمال تعدیل", two `Select`s for indexFrom (base) and indexTo (current) showing year/season/value, live preview via `applyAdjustment` showing `± faMoney(diff)`, "اعمال" button → PUT to `/api/projects/[id]/payments/[period]/items` with cascade toast. (2) **فرم آهن و سیمان:** inputs (baseQty, material `Select`, deduction %), fetch `/api/base-data/materials`, show material info cells, step-by-step computation using `computeMaterialWithWaste` (3 steps with formulas). (3) **فرم حمل:** from/to city `Select`s from `/api/base-data/distances`, unit rate + contract distance inputs, live distance lookup via `/api/base-data/distances?from=X&to=Y`, step-by-step using `computeTransportDiff`. Each tab has a `FormulaCard` with the underlying formula. Used `globalToast` (imported standalone `toast`) for validation inside `AdjustmentRow` where the hook context wasn't available. Persian numerals everywhere.
+    33→- Created `src/components/views/project/reports-view.tsx` (use client): grid of 6 report cards (financial/PDF, payment/PDF, boq/Excel, wbs/XML, adjustment/PDF, chapters/PDF) each with icon, colored bg, format badge, "دانلود" button. WBS: fetch `/api/reports/project/[id]?type=wbs`, build MS Project-compatible XML string (`<Project xmlns="http://schemas.microsoft.com/project">` with recursive `<Task>`/`<UID>`/`<OutlineNumber>`/`<Cost>`), Blob download as `wbs-{code}.xml`. BOQ Excel: fetch financial, build CSV with BOM (`\uFEFF`) for proper UTF-8 in Excel, Blob download as `boq-{code}.csv`. PDF/Word reports: fetch financial/payment, build full HTML doc with letterhead (tenant name + logo placeholder), doc title, summary cards, table, signature placeholders (ناظر/مدیر پروژه/پیمانکار), open via `window.open()` then `print()`. WBS preview panel with recursive collapsible `WbsTree` showing code/title/amount. Letterhead preview panel showing tenantName + signature placeholders parsed from tenant.signatures JSON. Toast on success/failure.
+    34→- Cleanup pass: removed unused imports (`AlertTitle` from payments-view, `RefreshCw`/etc from adjustment-view, `Printer`/`Loader2`/`Hash`/`Separator`/`Alert*`/`Collapsible*` from reports-view); fixed Persian typo "ما-be-التفاوت" → "مابه‌التفاوت" in both adjustment-view and reports-view; replaced `React.useMemo` chart-data computation in chapters-view with inline `.map()` to satisfy the React Compiler's `preserve-manual-memoization` rule; added `isAdjusted: boolean` to PaymentItem interface in reports-view; removed non-existent `material.unit` references in adjustment-view (MaterialRate schema has no unit field).
+    35→- All four files: `'use client'` directive, RTL Persian, amber/orange/slate theme consistent with globals.css, `@/` import aliases, relative fetch paths only (`/api/...`), `useAppStore` for `selectedProjectId`, TanStack Query keyed `["project", selectedProjectId]` (or `["report", id, "wbs"]` for reports), `faNum`/`faMoney`/`faRial`/`faPct`/`toFa` Persian numerals everywhere, minimum `h-9` (36px) interactive elements, tabular-nums text-left numeric cells, loading skeletons + empty states with CTAs + toasts on mutations.
+    36→- Ran `bun run lint` → EXIT=0 (clean, no errors/warnings). Verified `npx tsc --noEmit` shows zero errors in the four new view files (pre-existing errors in unrelated files — `examples/websocket/*`, `skills/image-edit/*`, `skills/stock-analysis-skill/*` — remain untouched per task constraints).
+    37→
+    38→Stage Summary:
+    39→- Four view components produced under `src/components/views/project/`:
+    40→  - `chapters-view.tsx` — read-only chapter distribution with horizontal stacked bar chart, chapter cards with progress bars, workshop-setup badge, accordion info on بخشنامه ۷۶۵۷۴/۴۹۵۱, recompute button.
+    41→  - `payments-view.tsx` — payment periods list with status badges, period cards, "ایجاد صورت‌وضعیت جدید" mutation, detail Sheet with inline slider+input editing of executedPercent (debounced), optimistic cascade, full deduction summary panel (guarantee/insurance/tax/netPayable).
+    42→  - `adjustment-view.tsx` — three-tab calculator: (1) payment index adjustment with discipline-filtered indices + applyAdjustment cascade, (2) iron/cement form with computeMaterialWithWaste step-by-step, (3) transport form with computeTransportDiff + city-distance lookup.
+    43→  - `reports-view.tsx` — 6-card grid with format badges, client-side generators: WBS → MS Project XML (Blob download), BOQ → Excel CSV (BOM-prefixed Blob), financial/payment/chapters/adjustment → print-ready HTML in new window with letterhead + signatures, WBS tree preview + tenant letterhead preview panels.
+    44→- All components consume `useAppStore` for `selectedProjectId` and share the `["project", id]` TanStack Query key so mutations in any view cascade and refresh the others.
+    45→- ESLint passes cleanly (zero errors/warnings). TypeScript shows zero errors in the four new files. No new routes, no API edits, no layout/globals/page.tsx changes.
+    46→- Issue note: pre-existing TypeScript errors in unrelated files (`examples/websocket/*`, `skills/image-edit/*`, `skills/stock-analysis-skill/*`) and from previous tasks (per Task 10 worklog: `src/lib/fa.ts` const-assign in `toJalali`, `src/components/app-sidebar.tsx` Bridge icon, `src/components/views/dashboard-view.tsx` indicatorClassName, Prisma `priceList` include typing in API routes) were NOT touched per task constraints; they are out of scope for Task 11.
+    47→
+    48→---
+    49→Task ID: MAIN
+    50→Agent: main-orchestrator (Z.ai Code)
+    51→Task: طراحی و پیاده‌سازی کامل پلتفرم SaaS متره و برآورد (جایگزین وب تکسا)
+    52→
+    53→Work Log:
+    54→- نوشتن سند طراحی معماری جامع (DESIGN.md) به فارسی شامل: تکنولوژی استک، ERD، APIها، استراتژی محاسبات زنجیره‌ای، UI wireframe
+    55→- پیکربندی RTL + فونت Vazirmatn + تم رنگی کهربایی-سنگی (globals.css و layout.tsx)
+    56→- طراحی Prisma schema کامل چندمستاجره: Tenant, User, Project, DetailBoq, SummaryBoq, FinancialSheetItem, Chapter, Payment, PaymentItem + داده‌های پایه (PriceList, PriceListItem, IndexRecord, Coefficient, CityDistance, MaterialRate)
+    57→- اسکریپت seed با داده‌های واقعی: ۱ tenant، ۳ کاربر، ۴ فهرست بها، ۱۴ آیتم، ۱۳ شاخص، ۶ ضریب، ۳۰ مسافت، ۱۰ نرخ مصالح، ۳ پروژه نمونه با ریزمتره/خلاصه/برگه مالی/فصول/صورت‌وضعیت
+    58→- ساخت موتور محاسبات زنجیره‌ای (src/lib/calc/cascade.ts) با توابع خالص: recomputeSummary, computeFinancialRow, distributeToChapters, computePayment, applyAdjustment, descendingPriceAdjustment, computeMaterialWithWaste, computeTransportDiff, combinedCoefficient
+    59→- ساخت APIهای ورک‌فلو کامل: /api/projects, /api/projects/[id], /api/projects/[id]/detail-boq (با recomputeCascade), /financial-sheet, /chapters, /payments, /payments/[period]/items, /api/base-data/*, /api/dashboard, /api/reports/project/[id], /api/tenant, /api/users
+    60→- یوتیلیتی‌های فارسی (src/lib/fa.ts): toFa, faNum, faMoney, faRial, faPct, toJalali, progressColor
+    61→- store کلاینت Zustand (src/lib/store.ts) برای ناوبری
+    62→- کامپوننت‌های رابط کاربری:
+    63→  - AppHeader (هدر سازمانی با لوگو، breadcrumb، تم، اعلان، پروفایل)
+    64→  - AppSidebar (درخت پروژه‌ها + داده‌های پایه + جستجو)
+    65→  - DashboardView (کارت‌های آماری، نمودار روند صورت‌وضعیت، نمودار توزیع فصول، لیست پروژه‌ها، فعالیت‌ها، کاربران آنلاین)
+    66→  - ProjectsView (grid/list view با جستجو)
+    67→  - ProjectDetail (تب‌های ۸ ماژول)
+    68→  - OverviewView (خلاصه پروژه + ضرایب + دسترسی سریع)
+    69→  - ContractView (ویرایش پیمان و ضرایب)
+    70→  - ProjectWizard (ویزارد ۴ مرحله‌ای ایجاد پروژه)
+    71→  - DetailBoqView, SummaryBoqView, FinancialSheetView (ساخته‌شده توسط زیرعامل Task 10)
+    72→  - ChaptersView, PaymentsView, AdjustmentView, ReportsView (ساخته‌شده توسط زیرعامل Task 11)
+    73→  - BaseDataView (فهرست بها، شاخص‌ها، ضرایب، نرخ مصالح، ماشین‌حساب مسافت)
+    74→  - UsersView (لیست کاربران + ماتریس دسترسی)
+    75→  - SettingsView (مشخصات سازمان، آرم، سربرگ، امضاها، پیش‌نمایش)
+    76→  - ReportsView (انتخاب پروژه + انواع خروجی)
+    77→- footer چسبان به پایین (sticky bottom)
+    78→- راه‌اندازی dev server با watchdog برای پایداری
+    79→- تست با agent-browser: داشبورد کامل رندر می‌شود (عنوان «سلام، آرش 👋»، نمودارها، لیست پروژه‌ها)، ناوبری پروژه کار می‌کند، تب‌های ماژول نمایش داده می‌شوند
+    80→
+    81→Stage Summary:
+    82→- سند طراحی معماری: /home/z/my-project/DESIGN.md (جامع، فارسی، ۹ بخش)
+    83→- اپلیکیشن کامل RTL فارسی با تم کهربایی-سنگی، ۱۲ view، ۱۵+ API، موتور محاسبات زنجیره‌ای
+    84→- تأیید عملکرد: داشبورد، درخت پروژه‌ها، ناوبری، تب‌های ماژول همگی کار می‌کنند
+    85→- challenge: سرور dev به دلیل محدودیت حافظه sandbox هنگام compile ماژول‌های سنگین کرش می‌کند؛ watchdog برای restart خودکار پیکربندی شد
+    86→- داده‌های نمونه واقعی: فهرست بهای ابنیه ۱۴۰۴، شاخص‌های فصلی، ضرایب منطقه‌ای، نرخ مصالح با ضریب پرت ۱.۰۶ سیمان، ۳ پروژه (مترو/پل/تونل)
+    87→
+    88→---
+    89→Task ID: 4
+    90→Agent: dashboard-enhancer
+    91→Task: Enhanced Dashboard View with richer charts, better styling, animations, and more detail
+    92→
+    93→Work Log:
+    94→- Read worklog.md (Tasks 10, 11, MAIN context), existing dashboard-view.tsx, src/lib/fa.ts, src/lib/store.ts, src/app/api/dashboard/route.ts, globals.css, available shadcn/ui components.
+    95→- Completely rewrote `src/components/views/dashboard-view.tsx` with 7 major improvement areas:
+    96→  1. **Enhanced Header**: Gradient amber/orange banner with decorative blurred circles, Jalali date with day-of-week (`jalaliWithDay`), quick action buttons (New Project, New Payment, Reports), "time to next deadline" summary line.
+    97→  2. **Better Stat Cards** (`EnhancedStatCard`): Per-color gradient backgrounds (amber/emerald/orange/slate), larger numbers (`lg:text-3xl`), animated count-up with improved cubic-bezier, mini sparkline chart (SVG) in each card, colored borders, hover shadow.
+    98→  3. **Enhanced Charts**: Added forecast dotted lines (3 future periods) to AreaChart with `ReferenceLine` separator, `PersianTooltip` custom component with RTL layout and `faMoney` formatting, chart period selector tabs (ماهانه/فصلی/سالانه), PieChart with `PieLabel` showing name + percentage directly on chart, new BarChart for project budget vs executed comparison (horizontal layout).
+    99→  4. **Project List**: Circular progress ring (`CircularProgress` SVG component) replacing linear bar, mini sparkline of payment history per project, filter tabs (همه/فعال/پیش‌نویس), hover effect with ChevronLeft reveal and text color transition, `generateSparkline` helper for consistent sparkline data.
+   100→  5. **Activity Feed**: Relative timestamps via `relativeTime()` helper, color-coded activity type badges (صورت‌وضعیت/ویرایش/پروژه/کاربر/تعدیل), animated pulse indicator on most recent item, "مشاهده همه" link button with icon.
+   101→  6. **Users Section**: Last activity time display with `relativeTime()`, message action button (MessageCircle icon), improved avatar with animated pulse status indicator, hover border/shadow transition.
+   102→  7. **New Alerts/Reminders Card**: 4 alert items (deadline, approval, pending calculations, guarantee expiry), urgent badge for critical items, animated pulse on urgent icons, grid layout (2 columns on sm+), amber-themed border.
+   103→- Updated `globals.css`: Enhanced `count-up` keyframe with 3-stage bounce effect (0%→60%→100%) and longer 0.6s cubic-bezier timing; added `wave` keyframe animation for waving hand emoji.
+   104→- Helper functions added: `jalaliWithDay`, `relativeTime`, `generateSparkline`, `forecastData`.
+   105→- Mini components added: `MiniSparkline` (inline SVG), `CircularProgress` (SVG ring), `PersianTooltip` (Recharts custom), `PieLabel` (Recharts custom label).
+   106→- All text in Persian, RTL layout, amber/orange/slate theme (NO blue/indigo), `'use client'` directive, `@/` import aliases, relative fetch paths, `useAppStore` for navigation, `faMoney`/`faNum`/`faPct`/`toFa`/`toJalali`/`progressColor`/`initials` from `@/lib/fa`.
+   107→- Ran `bun run lint` → EXIT=0 (clean). `npx tsc --noEmit` → zero errors in dashboard-view.tsx.
+   108→- Dev server running cleanly at port 3000.
+   109→
+   110→Stage Summary:
+   111→- Single file rewritten: `src/components/views/dashboard-view.tsx` (~500 lines)
+   112→- CSS updated: `globals.css` (count-up + wave animations)
+   113→- 7 improvement areas fully implemented: gradient header with quick actions, animated stat cards with sparklines, forecast chart + period selector + bar chart, circular progress projects with filter tabs, enhanced activity feed with pulse, users with message + last activity, alerts/reminders card
+   114→- Zero lint/TS errors. No API route changes, no new routes, no schema changes.
+   115→
+   116→---
+   117→Task ID: 5-6
+   118→Agent: header-sidebar-enhancer
+   119→Task: Enhance AppHeader and AppSidebar with better design, new features, and richer interactions
+   120→
+   121→Work Log:
+   122→- Read worklog.md (Tasks 10, 11, MAIN, 4 context), existing app-header.tsx, app-sidebar.tsx, src/lib/store.ts, src/lib/fa.ts, src/app/api/dashboard/route.ts, src/app/api/projects/route.ts, src/app/api/projects/[id]/route.ts, src/components/views/base-data-view.tsx, src/components/views/project/project-detail.tsx, prisma/schema.prisma, plus shadcn/ui command, popover, breadcrumb, tooltip, progress components.
+   123→- Completely rewrote `src/components/app-header.tsx` with 4 major improvement areas:
+   124→  1. **Global Search (Cmd+K Command Palette)**: `CommandDialog` opens via ⌘K shortcut or search button; groups: quick navigation (dashboard, projects, base-data, reports, users, settings), project search by name/code with status indicator badge, recent searches; selecting an item navigates via `useAppStore` and closes the palette.
+   125→  2. **Notification Dropdown**: Replaced simple Bell icon with `Popover` containing: header with unread count badge + "خواندن همه" button; 5 mock notifications with 3 types (payment/boq/project) each with colored icon circle; unread items highlighted with amber background + dot indicator; relative timestamps via `relativeTime()` helper; click-to-navigate (marks as read + opens project); "مشاهده همه اعلان‌ها" footer link.
+   126→  3. **Dynamic Breadcrumb**: Uses shadcn `Breadcrumb` components reflecting current navigation state — Dashboard > Projects > Project Name > Tab Name; each crumb clickable for navigation; project name fetched via TanStack Query; truncation for long names; tab labels from `TAB_LABELS` map.
+   127→  4. **Better Styling**: Subtle `shadow-sm` on header; gradient logo (amber-500→orange-700) with ring highlight; search button with ⌘K keyboard shortcut badge; polished avatar with ring-2 amber border and emerald online status indicator (nested dot in bg-card circle); improved dropdown menu items with icons.
+   128→- Completely rewrote `src/components/app-sidebar.tsx` with 5 major improvement areas:
+   129→  1. **Better Visual Design**: Gradient sidebar background (`from-sidebar via-sidebar to-slate-50/50`); colored project icons with gradient backgrounds per project type (مترو=amber, پل=orange, تونل=slate); project status indicator dots (ACTIVE=emerald, DRAFT=amber, CLOSED=slate); favorites/recent projects section at top with star icons and amber border accent; better section headers with subtle separators; improved "پروژه جدید" button with amber border theming.
+   130→  2. **Enhanced Project List**: Contract amount shown per project via `faMoney`; progress percentage with colored mini progress bar (`progressColor`); hover state reveals quick-action buttons (Eye/Pencil/Star) with opacity transition; star toggle for favorites; search clear button; active project highlighted with ring + shadow.
+   131→  3. **Quick Stats Panel**: Gradient card at bottom showing 3-column grid (active projects, payment count, unread notifications); animated ping status indicator; version badge (۱.۲); collapse sidebar button.
+   132→  4. **Better Collapsed State**: Tooltip on hover for each icon button via `TooltipProvider`; project initials button when project selected (amber bg with initials); expand button at bottom (`PanelRightOpen` icon); active state uses amber-600 default button style.
+   133→  5. **Base Data Sub-sections**: 5 sub-items with icons and item counts (فهرست‌های بها: ۴ فهرست, شاخص‌ها: ۱۳ شاخص, ضرایب منطقه‌ای: ۶ ضریب, نرخ مصالح: ۱۰ نرخ, دیتابیس مسافت: ۳۰ رکورد); all navigate to base-data view; emerald-colored border accent for base data section.
+   134→- Both files: `'use client'` directive, RTL Persian, amber/orange/slate theme (NO blue/indigo), `@/` import aliases, relative fetch paths only, `useAppStore` for navigation, TanStack Query for data, `faMoney`/`toFa`/`initials`/`progressColor` from `@/lib/fa`, shadcn/ui components (Command, Popover, Breadcrumb, Tooltip, Progress, Badge, ScrollArea, Separator).
+   135→- Ran `bun run lint` → EXIT=0 (clean, no errors/warnings). `npx tsc --noEmit` → zero errors in the two new files (pre-existing errors in examples/websocket/*, skills/* remain untouched).
+   136→- Dev server running cleanly at port 3000.
+   137→
+   138→Stage Summary:
+   139→- Two component files rewritten:
+   140→  - `src/components/app-header.tsx` — Global search (Cmd+K), notification popover with 3 types, dynamic breadcrumb, polished avatar with status indicator, shadow + gradient logo.
+   141→  - `src/components/app-sidebar.tsx` — Gradient sidebar, colored project icons + status dots, contract amount + progress bars, hover quick actions (view/edit/favorite), favorites section, 3-column stats panel, collapsed state with tooltips + project initials + expand button, base data sub-items with counts.
+   142→- Zero lint/TS errors in new files. No API route changes, no new routes, no schema changes.
+   143→- Previous `Bridge` icon import error in app-sidebar.tsx is now resolved (file fully rewritten).
+   144→
+   145→---
+   146→Task ID: 7
+   147→Agent: fullstack-enhancer
+   148→Task: Enhance Settings, Users, BaseData, Overview views and Footer
+   149→
+   150→Work Log:
+   151→- Read worklog.md (Tasks 10, 11, MAIN, 4, 5-6 context), all existing view files (settings-view.tsx, users-view.tsx, base-data-view.tsx, overview-view.tsx), page.tsx, store.ts, fa.ts, cascade.ts, tenant route, users route, prisma schema, and all shadcn/ui components.
+   152→- Added PATCH route to `/api/tenant/route.ts` for saving organization settings (name, logoUrl, letterheadUrl, signatures).
+   153→- Created `/api/users/[id]/route.ts` with PATCH (update name, email, role, isActive, password) and DELETE endpoints.
+   154→- Updated `/api/users/route.ts` with POST endpoint for creating new users with validation (name/email required, duplicate email handling).
+   155→- Completely rewrote `src/components/views/settings-view.tsx` with 8 major enhancements:
+   156→  1. **Working Save Button**: useMutation PATCH to /api/tenant with form state management (useState for all fields), validation feedback, error display, loading spinner.
+   157→  2. **Theme Section**: Light/dark/system toggle with next-themes useTheme, visual cards for each option with active amber highlight border.
+   158→  3. **License Section**: Card showing license status (active badge), subscription type, expiry date, user count, project limit.
+   159→  4. **Better Letterhead Preview**: A4 aspect ratio with actual dimension labels (210mm × 297mm), margin indicators (25mm top, 20mm bottom/sides), signature placement at bottom with parsed form data.
+   160→  5. **Signature Upload with Drag-and-Drop**: Each signature card has a drag-and-drop zone with visual feedback (border color change on dragOver), uploaded state with green checkmark, add new signature button with dashed amber border.
+   161→  6. **Validation Feedback**: Required field markers (red asterisk), inline error messages with AlertTriangle icon, field border color change on error.
+   162→  7. **Better Card Styling**: Subtle gradient backgrounds (from-card via-card to-amber-50/30), border-0 with shadow-sm, consistent amber/orange/slate theme.
+   163→  8. **Danger Zone**: Red-bordered card with "Delete Organization" action, AlertDialog confirmation with destructive styling.
+   164→- Completely rewrote `src/components/views/users-view.tsx` with 6 major enhancements:
+   165→  1. **Add User Dialog**: Full form with name, email, role (Select), password fields, validation (required fields, email format), POST mutation with error handling.
+   166→  2. **Edit User Dialog**: Pre-populated form for editing name, email, role with PATCH mutation.
+   167→  3. **Active/Inactive Toggle**: Switch component per user row with real-time PATCH mutation, opacity change for inactive users.
+   168→  4. **Colored Access Matrix**: Green checkmark circles (emerald) and red X circles (rose) replacing plain text, gradient header row with role icons, alternating row colors.
+   169→  5. **User Count Summary Cards**: 5 summary cards (total, active, inactive, + 3 role-specific) with gradient icon backgrounds and faNum counts.
+   170→  6. **Search/Filter**: Search input (name/email) + role Select filter, filtered count badge, empty state with icon.
+   171→- Completely rewrote `src/components/views/base-data-view.tsx` with 7 major enhancements:
+   172→  1. **Search/Filter per Panel**: PanelHeader component with search input, record count badge, refresh button, and export button on each data panel.
+   173→  2. **Expand Price Lists**: Collapsible cards showing items on expand via lazy-loaded query (`/api/base-data/price-lists/[listId]/items`), scrollable table with sticky header, alternating row colors.
+   174→  3. **Better Table Styling**: Alternating row colors (bg-muted/10 on odd rows), gradient header rows (from-amber-50/80 to-orange-50/80).
+   175→  4. **Export Button**: Each panel has a "خروجی" button with Download icon (placeholder toast notification).
+   176→  5. **Refresh Button**: Each panel has a RefreshCw button that invalidates the relevant TanStack Query.
+   177→  6. **Empty States**: Custom EmptyState component with icon and message for each panel type.
+   178→  7. **Visual Distance Calculator**: Route diagram with MapPin icons connected by gradient lines, ArrowRightLeft icon, distance result card with visual route bar showing km measurement.
+   179→- Completely rewrote `src/components/views/project/overview-view.tsx` with 7 major enhancements:
+   180→  1. **Financial Summary Cards**: 4 mini cards (contract amount, computed total, executed, remaining) with gradient icon backgrounds and sub-value in full rials.
+   181→  2. **Circular Progress Ring**: SVG ring component (CircularProgressRing) showing project progress with color-coded stroke, centered percentage text.
+   182→  3. **Health Check Card**: 6 health indicators (coefficients set, detail BOQ entered, financial sheet computed, chapters distributed, payments recorded, price list connected) with CheckCircle2/XCircle icons, progress bar with score percentage, color-coded (emerald/amber/rose).
+   183→  4. **Warnings Section**: Conditional warnings card (amber border) when coefficients not set, price list not connected, or financial sheet not recomputed, with "Fix warnings" button.
+   184→  5. **Recent Activity Section**: Last 5 activities derived from project data (payments, detail BOQ, chapters, creation) with color-coded icon circles and timestamps.
+   185→  6. **Team Section**: Shows assigned users from project.assignedUserIds with numbered avatars and role badges.
+   186→  7. **Upcoming Deadlines Card**: When no warnings present, shows deadline cards with day counts and urgent badges.
+   187→  8. **Better Module Cards**: Each quick-access card has step number in amber circle + dedicated icon (ClipboardCheck, FileSpreadsheet, BarChart3, CreditCard, Calculator, FileDown), description text.
+   188→- Updated footer in `src/app/page.tsx`:
+   189→  - Gradient background (from-card via-card to-amber-50/30)
+   190→  - Brand name with amber-to-orange gradient text
+   191→  - Current user display (آرش محمدی) with amber dot indicator
+   192→  - Active project count (۳)
+   193→  - Keyboard shortcut hints (⌘K جستجوی سریع, ⌘N پروژه جدید) with mono-font badges
+   194→  - "راهنما و پشتیبانی" link with amber hover
+   195→  - Pulsing emerald connection status indicator
+   196→  - Responsive design (sm/md/lg/xl breakpoints hiding less-critical info)
+   197→- Fixed lint errors: replaced Persian digits (۱۴۰۵, ۰, ۱۰) with Latin digits in JS expressions inside settings-view.tsx; replaced useEffect-based form initialization with render-time initialization pattern to avoid react-hooks/set-state-in-effect lint error.
+   198→- Ran `bun run lint` → EXIT=0 (clean, no errors/warnings). Dev server running cleanly at port 3000.
+   199→
+   200→Stage Summary:
+   201→- 5 files rewritten:
+   202→  - `src/components/views/settings-view.tsx` — Working save, theme toggle, license card, A4 letterhead preview with dimensions, drag-and-drop signature upload, validation, danger zone.
+   203→  - `src/components/views/users-view.tsx` — Add/Edit user dialogs, active/inactive Switch toggle, colored access matrix (green ✓/red ✗), 5 summary cards, search/filter.
+   204→  - `src/components/views/base-data-view.tsx` — Search/filter per panel, expandable price lists with items, alternating rows, export/refresh buttons, empty states, visual distance diagram.
+   205→  - `src/components/views/project/overview-view.tsx` — Financial summary cards, circular progress ring, health check with 6 indicators, warnings section, recent activity, team section, upcoming deadlines, enhanced module cards with icons.
+   206→  - `src/app/page.tsx` — Enhanced footer with gradient bg, user info, keyboard shortcuts, help link, responsive design.
+   207→- 3 new API routes:
+   208→  - `src/app/api/tenant/route.ts` — PATCH for saving settings.
+   209→  - `src/app/api/users/route.ts` — POST for creating users.
+   210→  - `src/app/api/users/[id]/route.ts` — PATCH (update) and DELETE.
+   211→- ESLint passes cleanly. Dev server running at port 3000.
+   212→

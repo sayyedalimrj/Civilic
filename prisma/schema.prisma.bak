@@ -1,0 +1,504 @@
+// Prisma schema برای پلتفرم متره و برآورد (جایگزین وب تکسا)
+// طراحی چندمستاجره با ضرایب زنجیره‌ای
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۱: چندمستاجرتی و احراز هویت
+// ═══════════════════════════════════════════════════════════
+
+model Tenant {
+  id            String   @id @default(cuid())
+  name          String
+  logoUrl       String?
+  letterheadUrl String?
+  // امضاهای مجاز به‌صورت JSON: [{role:"ناظر", name:"...", signUrl:"..."}]
+  signatures    String   @default("[]")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  users         User[]
+  projects      Project[]
+}
+
+enum UserRole {
+  ADMIN
+  ESTIMATOR
+  BILLER
+}
+
+model User {
+  id           String   @id @default(cuid())
+  tenantId     String
+  email        String   @unique
+  name         String
+  role         String   @default("ESTIMATOR") // ADMIN | ESTIMATOR | BILLER
+  passwordHash String?
+  isActive     Boolean  @default(true)
+  avatarUrl    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۲: داده‌های پایه مرجع (Reference Data)
+// ═══════════════════════════════════════════════════════════
+
+model PriceList {
+  id        String   @id @default(cuid())
+  year      Int      // سال شمسی: 1403, 1404, ...
+  discipline String  // ابنیه | راه و باند | نفت و گاز | ژئوتکنیک | ...
+  title     String
+  createdAt DateTime @default(now())
+
+  items     PriceListItem[]
+  projects  Project[]
+
+  @@unique([year, discipline])
+}
+
+model PriceListItem {
+  id           String   @id @default(cuid())
+  priceListId  String
+  code         String   // کد فهرست بها
+  title        String
+  unit         String   // مترمربع | مترمکعب | تن | ...
+  unitPrice    Float
+  createdAt    DateTime @default(now())
+
+  priceList    PriceList @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+  detailBoqs   DetailBoq[]
+
+  @@index([priceListId])
+  @@index([code])
+}
+
+model IndexRecord {
+  id         String   @id @default(cuid())
+  year       Int
+  season     String   // بهار | تابستان | پاییز | زمستان
+  discipline String   // رشته‌ای یا "کلی"
+  value      Float    // شاخص
+  createdAt  DateTime @default(now())
+
+  @@unique([year, season, discipline])
+}
+
+model Coefficient {
+  id         String   @id @default(cuid())
+  year       Int
+  discipline String
+  type       String   // REGIONAL | BASE | ALTITUDE | FLOOR | TUNNEL
+  value      Float
+  createdAt  DateTime @default(now())
+
+  @@unique([year, discipline, type])
+}
+
+model CityDistance {
+  id       String @id @default(cuid())
+  fromCity String
+  toCity   String
+  km       Float
+
+  @@unique([fromCity, toCity])
+  @@index([fromCity])
+}
+
+model MaterialRate {
+  id          String   @id @default(cuid())
+  material    String   // فولاد | سیمان | ...
+  source      String   // NET | STATS | DAILY
+  year        Int
+  rate        Float
+  wasteFactor Float    @default(1.0) // ضریب پرت، مثلاً 1.06 برای سیمان
+  createdAt   DateTime @default(now())
+
+  @@unique([material, source, year])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۳: پروژه و ورک‌فلو
+// ═══════════════════════════════════════════════════════════
+
+model Project {
+  id              String   @id @default(cuid())
+  tenantId        String
+  name            String
+  code            String   // کد پروژه
+  documentCode    String?  // کد مدرک
+  year            Int
+  priceListId     String?
+  // مبلغ اولیه پیمان (ریال)
+  contractAmount  Float    @default(0)
+  contractDate    DateTime?
+  status          String   @default("DRAFT") // DRAFT | ACTIVE | CLOSED
+  location        String?  // شهر/منطقه
+  description     String?
+
+  // ضرایب پروژه به‌صورت JSON
+  // { general, regional, altitude, floors, tunnelHardship }
+  coefficients    String   @default("{}")
+
+  // مبلغ محاسبه‌شده‌ی کل (cached برای عملکرد)
+  cachedTotal     Float    @default(0)
+  cachedExecuted  Float    @default(0)
+
+  assignedUserIds String   @default("[]") // JSON array
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  priceList       PriceList? @relation(fields: [priceListId], references: [id])
+  detailBoqs      DetailBoq[]
+  summaryBoqs     SummaryBoq[]
+  financialSheet  FinancialSheetItem[]
+  chapters        Chapter[]
+  payments        Payment[]
+  modules         ProjectModule[]
+  alerts          Alert[]
+  comments        Comment[]
+  materialsAtSite MaterialAtSite[]
+  bidRanges       BidRange[]
+  auditLogs       AuditLog[]
+
+  @@index([tenantId])
+}
+
+// ─── مرحله ۲: ریزمتره ───
+model DetailBoq {
+  id              String   @id @default(cuid())
+  projectId       String
+  priceListItemId String?
+  code            String   // کد فهرست بها
+  description     String
+  unit            String
+  quantity        Float    @default(0)
+  // قفل هم‌زمانی
+  lockedBy        String?
+  lockedAt        DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project         Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  priceListItem   PriceListItem? @relation(fields: [priceListItemId], references: [id])
+
+  @@index([projectId])
+  @@index([code])
+}
+
+// ─── مرحله ۲: خلاصه متره (تجمیع ریزمتره) ───
+model SummaryBoq {
+  id              String   @id @default(cuid())
+  projectId       String
+  priceListItemId String?
+  code            String
+  description     String
+  unit            String
+  totalQuantity   Float    @default(0) // مجموع از ریزمتره
+  updatedAt       DateTime @updatedAt
+
+  project         Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, code])
+  @@index([projectId])
+}
+
+// ─── مرحله ۳: برگه مالی ───
+model FinancialSheetItem {
+  id            String   @id @default(cuid())
+  projectId     String
+  summaryBoqId  String?
+  code          String
+  description   String
+  unit          String
+  quantity      Float    @default(0)
+  unitPrice     Float    @default(0) // قیمت واحد (آیتم ستاره‌دار = قیمت جدید)
+  isStarred     Boolean  @default(false) // آیتم ستاره‌دار
+  relatedCode   String?  // کد مرتبط (بخشنامه ۴۹۵۱)
+  reference     String   @default("NET") // NET | STATS | DAILY
+  totalAmount   Float    @default(0) // quantity × unitPrice
+  // آنالیز بها (۴ عامل) به‌صورت JSON
+  analysis      String   @default("{}")
+  chapterNo     Int      @default(1) // فصل مربوطه
+  updatedAt     DateTime @updatedAt
+
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  paymentItems  PaymentItem[]
+
+  @@index([projectId])
+  @@index([code])
+}
+
+// ─── مرحله ۳: فصول ───
+model Chapter {
+  id              String   @id @default(cuid())
+  projectId       String
+  chapterNo       Int
+  title           String
+  amount          Float    @default(0)
+  isWorkshopSetup Boolean  @default(false) // تجهیز کارگاه
+  workshopMode    String?  // حالت تجهیز کارگاه
+  percent         Float    @default(0) // درصد از کل
+  updatedAt       DateTime @updatedAt
+
+  project         Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, chapterNo])
+  @@index([projectId])
+}
+
+// ─── مرحله ۴: صورت‌وضعیت ───
+model Payment {
+  id              String   @id @default(cuid())
+  projectId       String
+  periodNo        Int      // شماره دوره
+  status          String   @default("DRAFT") // DRAFT | SUBMITTED | APPROVED | REJECTED
+  // گردش کار (State Machine)
+  submittedBy     String?
+  submittedAt     DateTime?
+  reviewedBy      String?
+  reviewedAt      DateTime?
+  reviewNote      String?
+  // قفل هم‌زمانی (Row-Level Locking)
+  lockedBy        String?
+  lockedAt        DateTime?
+  // تاریخچه گردش کار (JSON: [{state, userId, at, note}])
+  stateHistory    String   @default("[]")
+  // کسورات قانونی (درصد)
+  guaranteePct    Float    @default(5.0)  // تضمین
+  insurancePct    Float    @default(2.0)  // بیمه
+  taxPct          Float    @default(5.0)  // مالیات
+  // مبالغ محاسبه‌شده
+  executedAmount  Float    @default(0)
+  guarantee       Float    @default(0)
+  insurance       Float    @default(0)
+  tax             Float    @default(0)
+  netPayable      Float    @default(0)
+  // موعد ارسال (برای سیستم هشدار)
+  dueDate         DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project         Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  items           PaymentItem[]
+
+  @@unique([projectId, periodNo])
+  @@index([projectId])
+}
+
+model PaymentItem {
+  id                 String   @id @default(cuid())
+  paymentId          String
+  financialSheetId   String?
+  code               String
+  description        String
+  unit               String
+  totalQuantity      Float    @default(0)
+  executedQuantity   Float    @default(0)
+  executedPercent    Float    @default(0)
+  unitPrice          Float    @default(0)
+  executedAmount     Float    @default(0)
+  adjustedAmount     Float    @default(0) // بعد از تعدیل
+  isAdjusted         Boolean  @default(false)
+
+  payment            Payment             @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  financialSheet     FinancialSheetItem? @relation(fields: [financialSheetId], references: [id])
+
+  @@index([paymentId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۵: ماژول‌های اختیاری پروژه (Modular Activation)
+// ═══════════════════════════════════════════════════════════
+
+model ProjectModule {
+  id          String   @id @default(cuid())
+  projectId   String
+  moduleKey   String   // BID_PRICE | REVERSE_ADJUST | MATERIAL_SITE | etc.
+  isEnabled   Boolean  @default(true)
+  updatedAt   DateTime @updatedAt
+
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, moduleKey])
+  @@index([projectId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۶: سیستم هشدارهای هوشمند (Alert Engine)
+// ═══════════════════════════════════════════════════════════
+
+model Alert {
+  id           String    @id @default(cuid())
+  tenantId     String
+  projectId    String?
+  type         String    // GUARANTEE | DEDUCTION | SCHEDULE | CALC | WORKFLOW | SYSTEM
+  severity     String    @default("INFO") // INFO | WARNING | CRITICAL
+  title        String
+  message      String
+  relatedId    String?
+  relatedType  String?   // PAYMENT | FINANCIAL_SHEET | DETAIL_BOQ | PROJECT
+  dueDate      DateTime?
+  isRead       Boolean   @default(false)
+  isResolved   Boolean   @default(false)
+  resolvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  project      Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([projectId])
+  @@index([isRead])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۷: سیستم ارتباط داخلی و کامنت‌گذاری (Collaboration)
+// ═══════════════════════════════════════════════════════════
+
+model ChatThread {
+  id          String   @id @default(cuid())
+  tenantId    String
+  // مشارکت‌کنندگان به‌صورت JSON: ["user-1","user-2"]
+  participants String  @default("[]")
+  lastMessageAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  messages    ChatMessage[]
+
+  @@index([tenantId])
+}
+
+model ChatMessage {
+  id          String   @id @default(cuid())
+  threadId    String
+  senderId    String
+  content     String
+  // خوانده‌شده توسط: JSON ["user-1","user-2"]
+  readBy      String   @default("[]")
+  createdAt   DateTime @default(now())
+
+  thread      ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@index([threadId])
+  @@index([senderId])
+}
+
+model Comment {
+  id             String   @id @default(cuid())
+  tenantId       String
+  projectId      String
+  userId         String
+  userName       String
+  // نوع موجودیت کامنت‌گذاری‌شده
+  entityType     String   // DETAIL_BOQ | FINANCIAL_SHEET | PAYMENT | CHAPTER | PROJECT
+  entityId       String   // شناسه‌ی ردیف/سند
+  entityLabel    String?  // برچسب نمایشی (مثلاً "ردیف ۱۲۴ - کد 010101")
+  parentCommentId String?
+  content        String
+  // mentions: JSON ["user-1","user-2"]
+  mentions       String   @default("[]")
+  resolved       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([entityType, entityId])
+  @@index([userId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۸: مصالح پای کار و دامنه قیمت پیشنهادی
+// ═══════════════════════════════════════════════════════════
+
+model MaterialAtSite {
+  id                 String   @id @default(cuid())
+  projectId          String
+  financialSheetId   String?
+  code               String
+  description        String
+  unit               String
+  // مقدار خریداری‌شده و تحویل‌شده در پای کار
+  purchasedQuantity  Float    @default(0)
+  // مقدار اجرا‌شده در صورت‌وضعیت‌های قبلی
+  previousExecuted   Float    @default(0)
+  // مقدار اجرا‌شده در دوره‌ی جاری
+  currentExecuted    Float    @default(0)
+  // مقدار باقی‌مانده در پای کار (محاسبه)
+  remainingQuantity  Float    @default(0)
+  // اطلاعات فاکتور
+  invoiceNo          String?
+  supplier           String?
+  purchaseDate       DateTime?
+  unitPrice          Float    @default(0)
+  totalCost          Float    @default(0)
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  project            Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([code])
+}
+
+model BidRange {
+  id              String   @id @default(cuid())
+  projectId       String
+  // درصدهای ورودی کاربر
+  overheadPct     Float    @default(15.0) // بالاسری
+  profitPct       Float    @default(8.0)  // سود پیمانکار
+  riskPct         Float    @default(5.0)  // ضریب ریسک
+  // مبلغ پایه (از محاسبات برگه مالی)
+  baseAmount      Float    @default(0)
+  // کف و سقف قیمت پیشنهادی (محاسبه)
+  floorAmount     Float    @default(0)
+  ceilingAmount   Float    @default(0)
+  suggestedAmount Float    @default(0) // پیشنهاد بهینه
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی ۹: ثبت رویدادها (Audit Log)
+// ═══════════════════════════════════════════════════════════
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  tenantId    String
+  projectId   String?
+  userId      String?
+  userName    String?
+  action      String   // CREATE | UPDATE | DELETE | SUBMIT | APPROVE | REJECT
+  entityType  String   // PROJECT | PAYMENT | FINANCIAL_SHEET | DETAIL_BOQ | etc.
+  entityId    String?
+  // قبل/بعد به‌صورت JSON
+  before      String?
+  after       String?
+  ipAddr      String?
+  createdAt   DateTime @default(now())
+
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([projectId])
+  @@index([entityType, entityId])
+}

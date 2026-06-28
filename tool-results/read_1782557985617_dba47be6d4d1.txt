@@ -1,0 +1,902 @@
+     1→"use client";
+     2→
+     3→import * as React from "react";
+     4→import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+     5→import {
+     6→  Wallet,
+     7→  Plus,
+     8→  RefreshCw,
+     9→  Loader2,
+    10→  FileText,
+    11→  CheckCircle2,
+    12→  Send,
+    13→  PenLine,
+    14→  ShieldCheck,
+    15→  Banknote,
+    16→  Receipt,
+    17→  TrendingUp,
+    18→  Info,
+    19→} from "lucide-react";
+    20→
+    21→import { useAppStore } from "@/lib/store";
+    22→import { faNum, faMoney, faRial, faPct, toFa } from "@/lib/fa";
+    23→import { useToast } from "@/hooks/use-toast";
+    24→import { cn } from "@/lib/utils";
+    25→
+    26→import { Button } from "@/components/ui/button";
+    27→import { Input } from "@/components/ui/input";
+    28→import { Badge } from "@/components/ui/badge";
+    29→import { Slider } from "@/components/ui/slider";
+    30→import {
+    31→  Card,
+    32→  CardContent,
+    33→  CardDescription,
+    34→  CardHeader,
+    35→  CardTitle,
+    36→} from "@/components/ui/card";
+    37→import { Skeleton } from "@/components/ui/skeleton";
+    38→import { Separator } from "@/components/ui/separator";
+    39→import { Alert, AlertDescription } from "@/components/ui/alert";
+    40→import {
+    41→  Sheet,
+    42→  SheetContent,
+    43→  SheetHeader,
+    44→  SheetTitle,
+    45→  SheetDescription,
+    46→} from "@/components/ui/sheet";
+    47→import {
+    48→  Table,
+    49→  TableBody,
+    50→  TableCell,
+    51→  TableHead,
+    52→  TableHeader,
+    53→  TableRow,
+    54→} from "@/components/ui/table";
+    55→
+    56→// ─── Types ───────────────────────────────────────────────────────────
+    57→interface PaymentItem {
+    58→  id: string;
+    59→  paymentId: string;
+    60→  financialSheetId: string | null;
+    61→  code: string;
+    62→  description: string;
+    63→  unit: string;
+    64→  totalQuantity: number;
+    65→  executedQuantity: number;
+    66→  executedPercent: number;
+    67→  unitPrice: number;
+    68→  executedAmount: number;
+    69→  adjustedAmount: number;
+    70→  isAdjusted: boolean;
+    71→}
+    72→
+    73→interface Payment {
+    74→  id: string;
+    75→  projectId: string;
+    76→  periodNo: number;
+    77→  status: string; // DRAFT | SUBMITTED | APPROVED
+    78→  guaranteePct: number;
+    79→  insurancePct: number;
+    80→  taxPct: number;
+    81→  executedAmount: number;
+    82→  guarantee: number;
+    83→  insurance: number;
+    84→  tax: number;
+    85→  netPayable: number;
+    86→  createdAt: string;
+    87→  updatedAt: string;
+    88→  items?: PaymentItem[];
+    89→}
+    90→
+    91→interface ProjectResponse {
+    92→  project: {
+    93→    id: string;
+    94→    name: string;
+    95→    code: string;
+    96→    contractAmount: number;
+    97→    cachedTotal: number;
+    98→    cachedExecuted: number;
+    99→    payments: Payment[];
+   100→  };
+   101→}
+   102→
+   103→// ─── Constants ───────────────────────────────────────────────────────
+   104→const STATUS_META: Record<
+   105→  string,
+   106→  { label: string; color: string; icon: typeof FileText }
+   107→> = {
+   108→  DRAFT: {
+   109→    label: "پیش‌نویس",
+   110→    color: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
+   111→    icon: PenLine,
+   112→  },
+   113→  SUBMITTED: {
+   114→    label: "ارسال‌شده",
+   115→    color: "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300",
+   116→    icon: Send,
+   117→  },
+   118→  APPROVED: {
+   119→    label: "تأییدشده",
+   120→    color: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300",
+   121→    icon: CheckCircle2,
+   122→  },
+   123→};
+   124→
+   125→// ─── Helpers ─────────────────────────────────────────────────────────
+   126→function parseFaNumber(input: string): number {
+   127→  const en = input
+   128→    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
+   129→    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+   130→    .replace(/[,،\s]/g, "");
+   131→  const n = parseFloat(en);
+   132→  return isFinite(n) ? n : 0;
+   133→}
+   134→
+   135→// ─── Main View ───────────────────────────────────────────────────────
+   136→export function PaymentsView() {
+   137→  const projectId = useAppStore((s) => s.selectedProjectId);
+   138→  const qc = useQueryClient();
+   139→  const { toast } = useToast();
+   140→
+   141→  const { data, isLoading, isError, refetch, isFetching } = useQuery<ProjectResponse>({
+   142→    queryKey: ["project", projectId],
+   143→    queryFn: async () => {
+   144→      const r = await fetch(`/api/projects/${projectId}`);
+   145→      if (!r.ok) throw new Error("بارگذاری پروژه ناموفق بود");
+   146→      return r.json();
+   147→    },
+   148→    enabled: !!projectId,
+   149→  });
+   150→
+   151→  const [selectedPeriod, setSelectedPeriod] = React.useState<number | null>(null);
+   152→
+   153→  const payments = data?.project?.payments ?? [];
+   154→  const selectedPayment = payments.find((p) => p.periodNo === selectedPeriod) || null;
+   155→
+   156→  // ─── Create new payment ───
+   157→  const createMutation = useMutation({
+   158→    mutationFn: async () => {
+   159→      const r = await fetch(`/api/projects/${projectId}/payments`, {
+   160→        method: "POST",
+   161→        headers: { "Content-Type": "application/json" },
+   162→        body: JSON.stringify({}),
+   163→      });
+   164→      if (!r.ok) throw new Error(await r.text());
+   165→      return r.json() as Promise<{ payment: Payment }>;
+   166→    },
+   167→    onSuccess: (res) => {
+   168→      qc.invalidateQueries({ queryKey: ["project", projectId] });
+   169→      toast({
+   170→        title: "صورت‌وضعیت ایجاد شد",
+   171→        description: (
+   172→          <span className="text-xs leading-5">
+   173→            دوره‌ی {toFa(res.payment.periodNo)} با {toFa(res.payment.items?.length || 0)}{" "}
+   174→            ردیف از روی برگه مالی کپی شد.
+   175→          </span>
+   176→        ),
+   177→      });
+   178→      setSelectedPeriod(res.payment.periodNo);
+   179→    },
+   180→    onError: (err: Error) => {
+   181→      toast({
+   182→        variant: "destructive",
+   183→        title: "خطا در ایجاد صورت‌وضعیت",
+   184→        description: err.message,
+   185→      });
+   186→    },
+   187→  });
+   188→
+   189→  // ─── Empty / loading / error states ───
+   190→  if (!projectId) {
+   191→    return (
+   192→      <EmptyState
+   193→        icon={<Wallet className="size-8" />}
+   194→        title="پروژه‌ای انتخاب نشده"
+   195→        description="یک پروژه را از نوار کناری انتخاب کنید تا صورت‌وضعیت‌های آن نمایش داده شود."
+   196→      />
+   197→    );
+   198→  }
+   199→
+   200→  if (isLoading) {
+   201→    return <PaymentsSkeleton />;
+   202→  }
+   203→
+   204→  if (isError) {
+   205→    return (
+   206→      <EmptyState
+   207→        icon={<RefreshCw className="size-8" />}
+   208→        title="خطا در بارگذاری"
+   209→        description="بارگذاری پروژه ناموفق بود."
+   210→        action={
+   211→          <Button variant="outline" className="h-9" onClick={() => refetch()}>
+   212→            <RefreshCw className="size-4" />
+   213→            تلاش مجدد
+   214→          </Button>
+   215→        }
+   216→      />
+   217→    );
+   218→  }
+   219→
+   220→  const totalExecuted = payments.reduce((s, p) => s + (p.executedAmount || 0), 0);
+   221→
+   222→  return (
+   223→    <div className="space-y-4 p-4 md:p-6">
+   224→      {/* Header */}
+   225→      <div className="flex flex-wrap items-end justify-between gap-3">
+   226→        <div>
+   227→          <h2 className="flex items-center gap-2 text-xl font-bold tracking-tight">
+   228→            <Wallet className="size-5 text-amber-600" />
+   229→            صورت‌وضعیت‌ها
+   230→          </h2>
+   231→          <p className="mt-1 text-xs text-muted-foreground">
+   232→            پروژه: <span className="font-medium text-foreground">{data?.project.name}</span>
+   233→          </p>
+   234→        </div>
+   235→        <div className="flex items-center gap-2">
+   236→          <Button
+   237→            variant="outline"
+   238→            size="sm"
+   239→            className="h-9"
+   240→            onClick={() => refetch()}
+   241→            disabled={isFetching}
+   242→          >
+   243→            <RefreshCw className={cn("size-4", isFetching && "animate-spin")} />
+   244→            بازخوانی
+   245→          </Button>
+   246→          <Button
+   247→            size="sm"
+   248→            className="h-9 gap-1.5"
+   249→            onClick={() => createMutation.mutate()}
+   250→            disabled={createMutation.isPending}
+   251→          >
+   252→            {createMutation.isPending ? (
+   253→              <Loader2 className="size-4 animate-spin" />
+   254→            ) : (
+   255→              <Plus className="size-4" />
+   256→            )}
+   257→            ایجاد صورت‌وضعیت جدید
+   258→          </Button>
+   259→        </div>
+   260→      </div>
+   261→
+   262→      {/* Summary mini-cards */}
+   263→      <div className="grid gap-3 sm:grid-cols-3">
+   264→        <SummaryMiniCard
+   265→          label="تعداد دوره‌ها"
+   266→          value={toFa(payments.length)}
+   267→          icon={<FileText className="size-4 text-amber-600" />}
+   268→        />
+   269→        <SummaryMiniCard
+   270→          label="مجموع اجرا‌شده"
+   271→          value={faMoney(totalExecuted)}
+   272→          sub={faRial(totalExecuted)}
+   273→          icon={<TrendingUp className="size-4 text-emerald-600" />}
+   274→        />
+   275→        <SummaryMiniCard
+   276→          label="مبلغ پیمان"
+   277→          value={faMoney(data?.project.contractAmount || 0)}
+   278→          sub={faRial(data?.project.contractAmount || 0)}
+   279→          icon={<Banknote className="size-4 text-amber-600" />}
+   280→        />
+   281→      </div>
+   282→
+   283→      {/* Payment periods list */}
+   284→      {payments.length === 0 ? (
+   285→        <EmptyState
+   286→          icon={<Wallet className="size-8" />}
+   287→          title="صورت‌وضعیت‌ای موجود نیست"
+   288→          description="برای ایجاد صورت‌وضعیت، روی دکمه‌ی «ایجاد صورت‌وضعیت جدید» بزنید. تمام ردیف‌های برگه مالی به‌صورت خودکار با مقدار اجرا برابر صفر کپی می‌شوند."
+   289→          action={
+   290→            <Button
+   291→              className="h-9 gap-1.5"
+   292→              onClick={() => createMutation.mutate()}
+   293→              disabled={createMutation.isPending}
+   294→            >
+   295→              {createMutation.isPending ? (
+   296→                <Loader2 className="size-4 animate-spin" />
+   297→              ) : (
+   298→                <Plus className="size-4" />
+   299→              )}
+   300→              ایجاد صورت‌وضعیت جدید
+   301→            </Button>
+   302→          }
+   303→        />
+   304→      ) : (
+   305→        <div className="grid gap-3 md:grid-cols-2">
+   306→          {payments.map((p) => (
+   307→            <PaymentCard
+   308→              key={p.id}
+   309→              payment={p}
+   310→              contractAmount={data?.project.contractAmount || 0}
+   311→              onOpen={() => setSelectedPeriod(p.periodNo)}
+   312→            />
+   313→          ))}
+   314→        </div>
+   315→      )}
+   316→
+   317→      {/* Detail sheet */}
+   318→      <Sheet
+   319→        open={selectedPayment !== null}
+   320→        onOpenChange={(o) => !o && setSelectedPeriod(null)}
+   321→      >
+   322→        <SheetContent
+   323→          side="left"
+   324→          className="flex w-full flex-col gap-0 p-0 sm:max-w-4xl"
+   325→        >
+   326→          <SheetHeader className="border-b bg-muted/30 p-4">
+   327→            <SheetTitle className="flex items-center gap-2 text-base">
+   328→              <FileText className="size-5 text-amber-600" />
+   329→              صورت‌وضعیت دوره‌ی {toFa(selectedPayment?.periodNo ?? 0)}
+   330→              {selectedPayment && (
+   331→                <Badge
+   332→                  className={cn(
+   333→                    "mr-1",
+   334→                    STATUS_META[selectedPayment.status]?.color ||
+   335→                      "bg-muted text-muted-foreground",
+   336→                  )}
+   337→                >
+   338→                  {STATUS_META[selectedPayment.status]?.label || selectedPayment.status}
+   339→                </Badge>
+   340→              )}
+   341→            </SheetTitle>
+   342→            <SheetDescription className="text-xs">
+   343→              برای ثبت اجرا، درصد اجرای هر ردیف را با اسلایدر یا ورودی عددی تنظیم کنید. کسورات قانونی به‌صورت خودکار محاسبه می‌شود.
+   344→            </SheetDescription>
+   345→          </SheetHeader>
+   346→
+   347→          {selectedPayment ? (
+   348→            <PaymentDetail payment={selectedPayment} />
+   349→          ) : null}
+   350→        </SheetContent>
+   351→      </Sheet>
+   352→    </div>
+   353→  );
+   354→}
+   355→
+   356→// ─── Payment Card (list item) ────────────────────────────────────────
+   357→function PaymentCard({
+   358→  payment,
+   359→  contractAmount,
+   360→  onOpen,
+   361→}: {
+   362→  payment: Payment;
+   363→  contractAmount: number;
+   364→  onOpen: () => void;
+   365→}) {
+   366→  const meta = STATUS_META[payment.status] || STATUS_META.DRAFT;
+   367→  const Icon = meta.icon;
+   368→  const pct = contractAmount > 0 ? (payment.executedAmount / contractAmount) * 100 : 0;
+   369→
+   370→  return (
+   371→    <Card className="overflow-hidden transition-shadow hover:shadow-md">
+   372→      <CardContent className="p-4">
+   373→        <div className="flex items-start justify-between gap-3">
+   374→          <div className="flex items-center gap-3">
+   375→            <div className="flex size-11 items-center justify-center rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-300">
+   376→              <Icon className="size-5" />
+   377→            </div>
+   378→            <div>
+   379→              <div className="text-sm font-semibold">
+   380→                دوره‌ی {toFa(payment.periodNo)}
+   381→              </div>
+   382→              <div className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
+   383→                {new Date(payment.createdAt).toLocaleDateString("fa-IR")}
+   384→              </div>
+   385→            </div>
+   386→          </div>
+   387→          <Badge className={meta.color}>{meta.label}</Badge>
+   388→        </div>
+   389→
+   390→        <div className="mt-3 grid grid-cols-2 gap-2">
+   391→          <MiniStat label="مبلغ اجرا" value={faMoney(payment.executedAmount)} />
+   392→          <MiniStat label="خالص پرداخت" value={faMoney(payment.netPayable)} />
+   393→          <MiniStat
+   394→            label="تضمین"
+   395→            value={`${faPct(payment.guaranteePct)} — ${faMoney(payment.guarantee)}`}
+   396→          />
+   397→          <MiniStat
+   398→            label="بیمه + مالیات"
+   399→            value={`${faPct(payment.insurancePct + payment.taxPct)} — ${faMoney(
+   400→              payment.insurance + payment.tax,
+   401→            )}`}
+   402→          />
+   403→        </div>
+   404→
+   405→        <div className="mt-3">
+   406→          <div className="mb-1 flex items-center justify-between text-[10px] text-muted-foreground">
+   407→            <span>سهم از مبلغ پیمان</span>
+   408→            <span className="tabular-nums">{faPct(pct)}</span>
+   409→          </div>
+   410→          <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+   411→            <div
+   412→              className="h-full rounded-full bg-amber-500"
+   413→              style={{ width: `${Math.min(100, pct)}%` }}
+   414→            />
+   415→          </div>
+   416→        </div>
+   417→
+   418→        <Button
+   419→          variant="outline"
+   420→          size="sm"
+   421→          className="mt-3 h-9 w-full gap-1.5"
+   422→          onClick={onOpen}
+   423→        >
+   424→          <FileText className="size-4" />
+   425→          مشاهده‌ی جزئیات و ثبت اجرا
+   426→        </Button>
+   427→      </CardContent>
+   428→    </Card>
+   429→  );
+   430→}
+   431→
+   432→function MiniStat({ label, value }: { label: string; value: string }) {
+   433→  return (
+   434→    <div className="rounded-md border bg-muted/20 px-2.5 py-1.5">
+   435→      <div className="text-[10px] text-muted-foreground">{label}</div>
+   436→      <div className="mt-0.5 text-xs font-semibold tabular-nums">{value}</div>
+   437→    </div>
+   438→  );
+   439→}
+   440→
+   441→function SummaryMiniCard({
+   442→  label,
+   443→  value,
+   444→  sub,
+   445→  icon,
+   446→}: {
+   447→  label: string;
+   448→  value: string;
+   449→  sub?: string;
+   450→  icon: React.ReactNode;
+   451→}) {
+   452→  return (
+   453→    <Card>
+   454→      <CardContent className="flex items-center gap-3 p-4">
+   455→        <div className="flex size-10 items-center justify-center rounded-lg bg-muted/40">
+   456→          {icon}
+   457→        </div>
+   458→        <div className="min-w-0 flex-1">
+   459→          <div className="text-[11px] text-muted-foreground">{label}</div>
+   460→          <div className="truncate text-base font-bold tabular-nums">{value}</div>
+   461→          {sub ? (
+   462→            <div className="truncate text-[10px] text-muted-foreground tabular-nums">{sub}</div>
+   463→          ) : null}
+   464→        </div>
+   465→      </CardContent>
+   466→    </Card>
+   467→  );
+   468→}
+   469→
+   470→// ─── Payment Detail (sheet content) ──────────────────────────────────
+   471→function PaymentDetail({ payment }: { payment: Payment }) {
+   472→  const projectId = useAppStore((s) => s.selectedProjectId);
+   473→  const qc = useQueryClient();
+   474→  const { toast } = useToast();
+   475→
+   476→  // ─── Mutation: update executedPercent ───
+   477→  const updateMutation = useMutation({
+   478→    mutationFn: async (payload: {
+   479→      itemId: string;
+   480→      executedPercent?: number;
+   481→      executedQuantity?: number;
+   482→      isAdjusted?: boolean;
+   483→      indexFrom?: number;
+   484→      indexTo?: number;
+   485→    }) => {
+   486→      const r = await fetch(
+   487→        `/api/projects/${projectId}/payments/${payment.periodNo}/items`,
+   488→        {
+   489→          method: "PUT",
+   490→          headers: { "Content-Type": "application/json" },
+   491→          body: JSON.stringify(payload),
+   492→        },
+   493→      );
+   494→      if (!r.ok) throw new Error(await r.text());
+   495→      return r.json() as Promise<{ item: PaymentItem; payment: Payment }>;
+   496→    },
+   497→    onMutate: async (payload) => {
+   498→      await qc.cancelQueries({ queryKey: ["project", projectId] });
+   499→      const prev = qc.getQueryData<ProjectResponse>(["project", projectId]);
+   500→      if (prev && payload.executedPercent !== undefined) {
+   501→        const newPayments = prev.project.payments.map((p) => {
+   502→          if (p.id !== payment.id) return p;
+   503→          const newItems = (p.items || []).map((it) => {
+   504→            if (it.id !== payload.itemId) return it;
+   505→            const execQty = (payload.executedPercent! / 100) * it.totalQuantity;
+   506→            const execAmt = execQty * it.unitPrice;
+   507→            return {
+   508→              ...it,
+   509→              executedPercent: payload.executedPercent!,
+   510→              executedQuantity: execQty,
+   511→              executedAmount: execAmt,
+   512→              adjustedAmount: it.isAdjusted ? execAmt : execAmt,
+   513→            };
+   514→          });
+   515→          const executedAmount = newItems.reduce((s, i) => s + i.executedAmount, 0);
+   516→          const guarantee = (executedAmount * p.guaranteePct) / 100;
+   517→          const insurance = (executedAmount * p.insurancePct) / 100;
+   518→          const tax = (executedAmount * p.taxPct) / 100;
+   519→          return {
+   520→            ...p,
+   521→            items: newItems,
+   522→            executedAmount,
+   523→            guarantee,
+   524→            insurance,
+   525→            tax,
+   526→            netPayable: executedAmount - guarantee - insurance - tax,
+   527→          };
+   528→        });
+   529→        qc.setQueryData<ProjectResponse>(["project", projectId], {
+   530→          ...prev,
+   531→          project: { ...prev.project, payments: newPayments },
+   532→        });
+   533→      }
+   534→      return { prev };
+   535→    },
+   536→    onError: (err: Error, _vars, ctx) => {
+   537→      if (ctx?.prev) qc.setQueryData(["project", projectId], ctx.prev);
+   538→      toast({
+   539→        variant: "destructive",
+   540→        title: "خطا در ثبت اجرا",
+   541→        description: err.message,
+   542→      });
+   543→    },
+   544→    onSettled: (data) => {
+   545→      qc.invalidateQueries({ queryKey: ["project", projectId] });
+   546→      if (data?.payment) {
+   547→        toast({
+   548→          title: "ثبت شد",
+   549→          description: (
+   550→            <span className="text-xs leading-5">
+   551→              خالص پرداخت دوره: <b>{faMoney(data.payment.netPayable)}</b> — تضمین:{" "}
+   552→              <b>{faMoney(data.payment.guarantee)}</b> — مالیات:{" "}
+   553→              <b>{faMoney(data.payment.tax)}</b>
+   554→            </span>
+   555→          ),
+   556→        });
+   557→      }
+   558→    },
+   559→  });
+   560→
+   561→  const items = payment.items || [];
+   562→  const executedSum = items.reduce((s, i) => s + i.executedAmount, 0);
+   563→  const adjustedSum = items.reduce((s, i) => s + (i.adjustedAmount || i.executedAmount), 0);
+   564→
+   565→  return (
+   566→    <div className="flex min-h-0 flex-1 flex-col">
+   567→      {/* Summary panel */}
+   568→      <div className="border-b bg-gradient-to-l from-amber-50 to-orange-50 p-4 dark:from-amber-950/30 dark:to-orange-950/20">
+   569→        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+   570→          <SummaryCell
+   571→            label="مبلغ اجرا"
+   572→            value={faMoney(payment.executedAmount)}
+   573→            sub={faRial(payment.executedAmount)}
+   574→            icon={<TrendingUp className="size-3.5" />}
+   575→            tone="default"
+   576→          />
+   577→          <SummaryCell
+   578→            label="تضمین"
+   579→            value={faMoney(payment.guarantee)}
+   580→            sub={`کسر ${faPct(payment.guaranteePct)}`}
+   581→            icon={<ShieldCheck className="size-3.5" />}
+   582→            tone="neg"
+   583→          />
+   584→          <SummaryCell
+   585→            label="بیمه"
+   586→            value={faMoney(payment.insurance)}
+   587→            sub={`کسر ${faPct(payment.insurancePct)}`}
+   588→            icon={<Receipt className="size-3.5" />}
+   589→            tone="neg"
+   590→          />
+   591→          <SummaryCell
+   592→            label="مالیات"
+   593→            value={faMoney(payment.tax)}
+   594→            sub={`کسر ${faPct(payment.taxPct)}`}
+   595→            icon={<Receipt className="size-3.5" />}
+   596→            tone="neg"
+   597→          />
+   598→        </div>
+   599→        <Separator className="my-3 bg-amber-200/50 dark:bg-amber-800/30" />
+   600→        <div className="flex flex-wrap items-center justify-between gap-3">
+   601→          <div>
+   602→            <div className="text-[11px] text-muted-foreground">خالص پرداختنی</div>
+   603→            <div className="text-2xl font-bold tabular-nums text-amber-900 dark:text-amber-200">
+   604→              {faMoney(payment.netPayable)}
+   605→            </div>
+   606→            <div className="text-[10px] text-muted-foreground tabular-nums">
+   607→              {faRial(payment.netPayable)}
+   608→            </div>
+   609→          </div>
+   610→          <div className="text-left">
+   611→            <div className="text-[11px] text-muted-foreground">مجموع تعدیل‌شده</div>
+   612→            <div className="text-base font-semibold tabular-nums">
+   613→              {faMoney(adjustedSum)}
+   614→            </div>
+   615→            <div className="text-[10px] text-muted-foreground tabular-nums">
+   616→              {toFa(items.length)} ردیف — {toFa(items.filter((i) => i.isAdjusted).length)} تعدیل‌شده
+   617→            </div>
+   618→          </div>
+   619→        </div>
+   620→      </div>
+   621→
+   622→      {/* Info banner */}
+   623→      <div className="border-b bg-muted/20 px-4 py-2">
+   624→        <Alert className="border-amber-200 bg-amber-50 py-2 dark:border-amber-900/40 dark:bg-amber-950/30">
+   625→          <Info className="size-3.5" />
+   626→          <AlertDescription className="text-[11px]">
+   627→            نرخ کسورات قانونی: تضمین <b>{faPct(payment.guaranteePct)}</b>، بیمه{" "}
+   628→            <b>{faPct(payment.insurancePct)}</b>، مالیات <b>{faPct(payment.taxPct)}</b>. این
+   629→            نرخ‌ها هنگام ایجاد دوره تعیین می‌شوند و در این نما فقط نمایش داده می‌شوند.
+   630→          </AlertDescription>
+   631→        </Alert>
+   632→      </div>
+   633→
+   634→      {/* Items table */}
+   635→      {items.length === 0 ? (
+   636→        <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
+   637→          این صورت‌وضعیت هنوز ردیفی ندارد.
+   638→        </div>
+   639→      ) : (
+   640→        <div className="max-h-[55vh] overflow-y-auto">
+   641→          <Table className="boq-table text-sm">
+   642→            <TableHeader className="sticky top-0 z-10 bg-muted/60 backdrop-blur">
+   643→              <TableRow className="border-b hover:bg-transparent">
+   644→                <TableHead className="h-10 w-10 bg-muted/60 px-2 text-center font-medium">#</TableHead>
+   645→                <TableHead className="h-10 bg-muted/60 px-2 font-medium">کد</TableHead>
+   646→                <TableHead className="h-10 bg-muted/60 px-2 font-medium">شرح</TableHead>
+   647→                <TableHead className="h-10 w-16 bg-muted/60 px-2 font-medium">واحد</TableHead>
+   648→                <TableHead className="h-10 w-24 bg-muted/60 px-2 text-left font-medium">مقدار کل</TableHead>
+   649→                <TableHead className="h-10 w-40 bg-muted/60 px-2 text-center font-medium">درصد اجرا</TableHead>
+   650→                <TableHead className="h-10 w-24 bg-muted/60 px-2 text-left font-medium">مقدار اجرا</TableHead>
+   651→                <TableHead className="h-10 w-32 bg-muted/60 px-2 text-left font-medium">مبلغ اجرا</TableHead>
+   652→                <TableHead className="h-10 w-32 bg-muted/60 px-2 text-left font-medium">تعدیل‌شده</TableHead>
+   653→              </TableRow>
+   654→            </TableHeader>
+   655→            <TableBody>
+   656→              {items.map((item, idx) => (
+   657→                <PaymentItemRow
+   658→                  key={item.id}
+   659→                  item={item}
+   660→                  idx={idx}
+   661→                  pending={updateMutation.isPending && updateMutation.variables?.itemId === item.id}
+   662→                  onCommit={(payload) => updateMutation.mutate(payload)}
+   663→                />
+   664→              ))}
+   665→            </TableBody>
+   666→          </Table>
+   667→        </div>
+   668→      )}
+   669→
+   670→      {/* Footer totals */}
+   671→      <div className="mt-auto border-t bg-muted/30 p-3">
+   672→        <div className="flex flex-wrap items-center justify-between gap-3">
+   673→          <div className="text-[11px] text-muted-foreground">
+   674→            مجموع مبالغ اجرا در این دوره
+   675→          </div>
+   676→          <div className="text-left">
+   677→            <span className="text-base font-bold tabular-nums text-amber-900 dark:text-amber-200">
+   678→              {faMoney(executedSum)}
+   679→            </span>
+   680→            <span className="mr-2 text-[10px] text-muted-foreground tabular-nums">
+   681→              {faRial(executedSum)}
+   682→            </span>
+   683→          </div>
+   684→        </div>
+   685→      </div>
+   686→    </div>
+   687→  );
+   688→}
+   689→
+   690→// ─── Payment Item Row (with inline slider + number input) ────────────
+   691→function PaymentItemRow({
+   692→  item,
+   693→  idx,
+   694→  pending,
+   695→  onCommit,
+   696→}: {
+   697→  item: PaymentItem;
+   698→  idx: number;
+   699→  pending: boolean;
+   700→  onCommit: (payload: {
+   701→    itemId: string;
+   702→    executedPercent?: number;
+   703→    executedQuantity?: number;
+   704→  }) => void;
+   705→}) {
+   706→  const [pct, setPct] = React.useState(item.executedPercent || 0);
+   707→  const [inputVal, setInputVal] = React.useState(toFa((item.executedPercent || 0).toFixed(1)));
+   708→  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+   709→
+   710→  React.useEffect(() => {
+   711→    setPct(item.executedPercent || 0);
+   712→    setInputVal(toFa((item.executedPercent || 0).toFixed(1)));
+   713→  }, [item.executedPercent]);
+   714→
+   715→  const commit = (newPct: number) => {
+   716→    const clamped = Math.max(0, Math.min(100, newPct));
+   717→    if (Math.abs(clamped - (item.executedPercent || 0)) < 0.01) return;
+   718→    onCommit({ itemId: item.id, executedPercent: clamped });
+   719→  };
+   720→
+   721→  const handleSlider = (v: number[]) => {
+   722→    const next = v[0] ?? 0;
+   723→    setPct(next);
+   724→    setInputVal(toFa(next.toFixed(1)));
+   725→    if (timerRef.current) clearTimeout(timerRef.current);
+   726→    timerRef.current = setTimeout(() => commit(next), 500);
+   727→  };
+   728→
+   729→  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+   730→    const raw = e.target.value;
+   731→    setInputVal(raw);
+   732→    const n = parseFaNumber(raw);
+   733→    const clamped = Math.max(0, Math.min(100, n));
+   734→    setPct(clamped);
+   735→    if (timerRef.current) clearTimeout(timerRef.current);
+   736→    timerRef.current = setTimeout(() => commit(clamped), 800);
+   737→  };
+   738→
+   739→  React.useEffect(() => {
+   740→    return () => {
+   741→      if (timerRef.current) clearTimeout(timerRef.current);
+   742→    };
+   743→  }, []);
+   744→
+   745→  const executedQty = (pct / 100) * item.totalQuantity;
+   746→
+   747→  return (
+   748→    <TableRow className="hover:bg-muted/30">
+   749→      <TableCell className="px-2 text-center text-xs text-muted-foreground">
+   750→        {toFa(idx + 1)}
+   751→      </TableCell>
+   752→      <TableCell className="px-2">
+   753→        <Badge variant="outline" className="font-mono text-[11px]">
+   754→          {item.code}
+   755→        </Badge>
+   756→      </TableCell>
+   757→      <TableCell className="max-w-[20vw] px-2">
+   758→        <div className="truncate text-xs" title={item.description}>
+   759→          {item.description}
+   760→        </div>
+   761→      </TableCell>
+   762→      <TableCell className="px-2 text-[11px] text-muted-foreground">{item.unit}</TableCell>
+   763→      <TableCell className="px-2 text-left text-xs tabular-nums">
+   764→        {faNum(item.totalQuantity, 2)}
+   765→      </TableCell>
+   766→      <TableCell className="px-2">
+   767→        <div className="flex items-center gap-2">
+   768→          <Slider
+   769→            value={[pct]}
+   770→            onValueChange={handleSlider}
+   771→            min={0}
+   772→            max={100}
+   773→            step={0.5}
+   774→            className="flex-1"
+   775→            aria-label="درصد اجرا"
+   776→          />
+   777→          <Input
+   778→            type="text"
+   779→            inputMode="decimal"
+   780→            dir="ltr"
+   781→            value={inputVal}
+   782→            onChange={handleInputChange}
+   783→            className="h-9 w-14 text-left tabular-nums text-xs"
+   784→            aria-label="درصد اجرا"
+   785→          />
+   786→          {pending ? (
+   787→            <Loader2 className="size-3.5 animate-spin text-amber-500" />
+   788→          ) : (
+   789→            <span className="w-7 text-left text-[10px] text-muted-foreground tabular-nums">
+   790→              {toFa(pct.toFixed(0))}٪
+   791→            </span>
+   792→          )}
+   793→        </div>
+   794→      </TableCell>
+   795→      <TableCell className="px-2 text-left text-xs tabular-nums">
+   796→        {faNum(executedQty, 2)}
+   797→      </TableCell>
+   798→      <TableCell className="px-2 text-left text-xs font-semibold tabular-nums">
+   799→        {faRial(item.executedAmount)}
+   800→      </TableCell>
+   801→      <TableCell
+   802→        className={cn(
+   803→          "px-2 text-left text-xs tabular-nums",
+   804→          item.isAdjusted &&
+   805→            Math.abs(item.adjustedAmount - item.executedAmount) > 0.01 &&
+   806→            "font-semibold text-amber-700 dark:text-amber-300",
+   807→        )}
+   808→      >
+   809→        {faRial(item.adjustedAmount || item.executedAmount)}
+   810→        {item.isAdjusted ? (
+   811→          <Badge className="ml-1 bg-amber-100 px-1 py-0 text-[9px] text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+   812→            تعدیل
+   813→          </Badge>
+   814→        ) : null}
+   815→      </TableCell>
+   816→    </TableRow>
+   817→  );
+   818→}
+   819→
+   820→// ─── Summary Cell ────────────────────────────────────────────────────
+   821→function SummaryCell({
+   822→  label,
+   823→  value,
+   824→  sub,
+   825→  icon,
+   826→  tone,
+   827→}: {
+   828→  label: string;
+   829→  value: string;
+   830→  sub?: string;
+   831→  icon: React.ReactNode;
+   832→  tone: "default" | "neg";
+   833→}) {
+   834→  return (
+   835→    <div className="rounded-lg border border-amber-200/60 bg-white/60 p-2.5 dark:border-amber-800/30 dark:bg-amber-950/20">
+   836→      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+   837→        {icon}
+   838→        {label}
+   839→      </div>
+   840→      <div
+   841→        className={cn(
+   842→          "mt-0.5 text-base font-bold tabular-nums",
+   843→          tone === "neg" ? "text-rose-600 dark:text-rose-400" : "text-amber-900 dark:text-amber-200",
+   844→        )}
+   845→      >
+   846→        {value}
+   847→      </div>
+   848→      {sub ? (
+   849→        <div className="text-[9px] text-muted-foreground tabular-nums">{sub}</div>
+   850→      ) : null}
+   851→    </div>
+   852→  );
+   853→}
+   854→
+   855→// ─── Skeleton ────────────────────────────────────────────────────────
+   856→function PaymentsSkeleton() {
+   857→  return (
+   858→    <div className="space-y-4 p-4 md:p-6">
+   859→      <div className="flex items-center justify-between">
+   860→        <Skeleton className="h-8 w-40" />
+   861→        <Skeleton className="h-9 w-44" />
+   862→      </div>
+   863→      <div className="grid gap-3 sm:grid-cols-3">
+   864→        {Array.from({ length: 3 }).map((_, i) => (
+   865→          <Skeleton key={i} className="h-20" />
+   866→        ))}
+   867→      </div>
+   868→      <div className="grid gap-3 md:grid-cols-2">
+   869→        {Array.from({ length: 4 }).map((_, i) => (
+   870→          <Skeleton key={i} className="h-44" />
+   871→        ))}
+   872→      </div>
+   873→    </div>
+   874→  );
+   875→}
+   876→
+   877→// ─── Empty State ─────────────────────────────────────────────────────
+   878→function EmptyState({
+   879→  icon,
+   880→  title,
+   881→  description,
+   882→  action,
+   883→}: {
+   884→  icon: React.ReactNode;
+   885→  title: string;
+   886→  description: string;
+   887→  action?: React.ReactNode;
+   888→}) {
+   889→  return (
+   890→    <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 p-6 text-center">
+   891→      <div className="flex size-16 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+   892→        {icon}
+   893→      </div>
+   894→      <h3 className="text-lg font-semibold">{title}</h3>
+   895→      <p className="max-w-md text-sm text-muted-foreground">{description}</p>
+   896→      {action}
+   897→    </div>
+   898→  );
+   899→}
+   900→
+   901→export default PaymentsView;
+   902→

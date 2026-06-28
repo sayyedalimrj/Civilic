@@ -1,0 +1,832 @@
+     1→"use client";
+     2→
+     3→import * as React from "react";
+     4→import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+     5→import {
+     6→  BarChart3,
+     7→  Calculator,
+     8→  Star,
+     9→  RefreshCw,
+    10→  Loader2,
+    11→  TrendingDown,
+    12→  Info,
+    13→  Hash,
+    14→} from "lucide-react";
+    15→import {
+    16→  Bar,
+    17→  BarChart,
+    18→  CartesianGrid,
+    19→  Cell,
+    20→  ResponsiveContainer,
+    21→  Tooltip,
+    22→  XAxis,
+    23→  YAxis,
+    24→} from "recharts";
+    25→
+    26→import { useAppStore } from "@/lib/store";
+    27→import { faNum, faMoney, faRial, toFa } from "@/lib/fa";
+    28→import { descendingPriceAdjustment } from "@/lib/calc/cascade";
+    29→import { useToast } from "@/hooks/use-toast";
+    30→import { cn } from "@/lib/utils";
+    31→
+    32→import { Button } from "@/components/ui/button";
+    33→import { Input } from "@/components/ui/input";
+    34→import { Badge } from "@/components/ui/badge";
+    35→import { Card, CardContent } from "@/components/ui/card";
+    36→import { Skeleton } from "@/components/ui/skeleton";
+    37→import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+    38→import { Separator } from "@/components/ui/separator";
+    39→import {
+    40→  Dialog,
+    41→  DialogContent,
+    42→  DialogDescription,
+    43→  DialogFooter,
+    44→  DialogHeader,
+    45→  DialogTitle,
+    46→} from "@/components/ui/dialog";
+    47→import {
+    48→  Select,
+    49→  SelectContent,
+    50→  SelectItem,
+    51→  SelectTrigger,
+    52→  SelectValue,
+    53→} from "@/components/ui/select";
+    54→import {
+    55→  Table,
+    56→  TableBody,
+    57→  TableCell,
+    58→  TableHead,
+    59→  TableHeader,
+    60→  TableRow,
+    61→} from "@/components/ui/table";
+    62→
+    63→// ─── Types ───────────────────────────────────────────────────────────
+    64→interface AnalysisResult {
+    65→  labor: number;
+    66→  equipment: number;
+    67→  material: number;
+    68→  transport: number;
+    69→  total: number;
+    70→}
+    71→
+    72→interface FinancialSheetItem {
+    73→  id: string;
+    74→  projectId: string;
+    75→  summaryBoqId: string | null;
+    76→  code: string;
+    77→  description: string;
+    78→  unit: string;
+    79→  quantity: number;
+    80→  unitPrice: number;
+    81→  isStarred: boolean;
+    82→  relatedCode: string | null;
+    83→  reference: string; // NET | STATS | DAILY
+    84→  totalAmount: number;
+    85→  analysis: string; // JSON string
+    86→  chapterNo: number;
+    87→  updatedAt: string;
+    88→}
+    89→
+    90→interface CascadeResult {
+    91→  summaryBoqUpdated: number;
+    92→  financialSheetTotal: number;
+    93→  chaptersUpdated: number;
+    94→}
+    95→
+    96→interface ProjectResponse {
+    97→  project: {
+    98→    id: string;
+    99→    name: string;
+   100→    code: string;
+   101→    cachedTotal: number;
+   102→    financialSheet: FinancialSheetItem[];
+   103→  };
+   104→}
+   105→
+   106→// ─── Constants ───────────────────────────────────────────────────────
+   107→const REFERENCES: { value: string; label: string; color: string }[] = [
+   108→  { value: "NET", label: "خالص", color: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300" },
+   109→  { value: "STATS", label: "آمار", color: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" },
+   110→  { value: "DAILY", label: "روزانه", color: "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300" },
+   111→];
+   112→
+   113→const CHAPTERS = Array.from({ length: 7 }, (_, i) => i + 1);
+   114→
+   115→const CHAPTER_TITLES: Record<number, string> = {
+   116→  1: "اول — عملیات زمینی",
+   117→  2: "دوم — اسکلت و سازه",
+   118→  3: "سوم — دیوارچینی",
+   119→  4: "چهارم — نازک‌کاری",
+   120→  5: "پنجم — تأسیسات",
+   121→  6: "ششم — در و پنجره",
+   122→  7: "هفتم — متفرقه",
+   123→};
+   124→
+   125→function parseAnalysis(raw: string): AnalysisResult {
+   126→  try {
+   127→    const p = JSON.parse(raw || "{}");
+   128→    return {
+   129→      labor: Number(p.labor) || 0,
+   130→      equipment: Number(p.equipment) || 0,
+   131→      material: Number(p.material) || 0,
+   132→      transport: Number(p.transport) || 0,
+   133→      total: Number(p.total) || 0,
+   134→    };
+   135→  } catch {
+   136→    return { labor: 0, equipment: 0, material: 0, transport: 0, total: 0 };
+   137→  }
+   138→}
+   139→
+   140→function parseFaNumber(input: string): number {
+   141→  const en = input
+   142→    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
+   143→    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+   144→    .replace(/[,،\s]/g, "");
+   145→  const n = parseFloat(en);
+   146→  return isFinite(n) ? n : 0;
+   147→}
+   148→
+   149→// ─── Analysis Dialog (۴ عامل) ───────────────────────────────────────
+   150→function AnalysisDialog({ item }: { item: FinancialSheetItem }) {
+   151→  const [open, setOpen] = React.useState(false);
+   152→  const analysis = React.useMemo(() => parseAnalysis(item.analysis), [item.analysis]);
+   153→
+   154→  const chartData = [
+   155→    { name: "نیروی انسانی", value: analysis.labor, fill: "#d97706" },
+   156→    { name: "ماشین‌آلات", value: analysis.equipment, fill: "#65a30d" },
+   157→    { name: "مصالح", value: analysis.material, fill: "#475569" },
+   158→    { name: "حمل", value: analysis.transport, fill: "#dc2626" },
+   159→  ];
+   160→
+   161→  return (
+   162→    <Dialog open={open} onOpenChange={setOpen}>
+   163→      <Button
+   164→        variant="outline"
+   165→        size="sm"
+   166→        className="h-9"
+   167→        onClick={() => setOpen(true)}
+   168→      >
+   169→        <BarChart3 className="size-4" />
+   170→        آنالیز بها
+   171→      </Button>
+   172→      <DialogContent className="sm:max-w-xl">
+   173→        <DialogHeader>
+   174→          <DialogTitle className="flex items-center gap-2">
+   175→            <BarChart3 className="size-5 text-amber-600" />
+   176→            آنالیز بهای ۴ عامل
+   177→          </DialogTitle>
+   178→          <DialogDescription>
+   179→            <Badge variant="outline" className="font-mono text-[11px]">{item.code}</Badge>
+   180→            <span className="mr-2">{item.description}</span>
+   181→          </DialogDescription>
+   182→        </DialogHeader>
+   183→
+   184→        {/* Mini bar chart */}
+   185→        <div className="rounded-lg border bg-muted/20 p-3">
+   186→          <ResponsiveContainer width="100%" height={200}>
+   187→            <BarChart data={chartData} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
+   188→              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+   189→              <XAxis dataKey="name" tick={{ fontSize: 11 }} reversed />
+   190→              <YAxis
+   191→                tickFormatter={(v) => faMoney(v)}
+   192→                tick={{ fontSize: 10 }}
+   193→                width={80}
+   194→                orientation="right"
+   195→              />
+   196→              <Tooltip
+   197→                formatter={(v: number) => faRial(v)}
+   198→                contentStyle={{ fontFamily: "inherit", fontSize: 12, borderRadius: 8 }}
+   199→                cursor={{ fill: "rgba(0,0,0,0.05)" }}
+   200→              />
+   201→              <Bar dataKey="value" radius={[6, 6, 0, 0]}>
+   202→                {chartData.map((c, i) => (
+   203→                  <Cell key={i} fill={c.fill} />
+   204→                ))}
+   205→              </Bar>
+   206→            </BarChart>
+   207→          </ResponsiveContainer>
+   208→        </div>
+   209→
+   210→        {/* 4-factor breakdown */}
+   211→        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+   212→          <FactorCard label="نیروی انسانی" value={analysis.labor} pct={analysis.total ? (analysis.labor / analysis.total) * 100 : 0} color="bg-amber-500" />
+   213→          <FactorCard label="ماشین‌آلات" value={analysis.equipment} pct={analysis.total ? (analysis.equipment / analysis.total) * 100 : 0} color="bg-lime-600" />
+   214→          <FactorCard label="مصالح" value={analysis.material} pct={analysis.total ? (analysis.material / analysis.total) * 100 : 0} color="bg-slate-600" />
+   215→          <FactorCard label="حمل" value={analysis.transport} pct={analysis.total ? (analysis.transport / analysis.total) * 100 : 0} color="bg-rose-600" />
+   216→        </div>
+   217→
+   218→        <Separator />
+   219→
+   220→        <div className="flex items-center justify-between rounded-lg bg-amber-50 px-4 py-2.5 dark:bg-amber-950/30">
+   221→          <span className="text-sm font-medium text-amber-900 dark:text-amber-200">مبلغ کل (پس از ضریب)</span>
+   222→          <span className="text-lg font-bold tabular-nums text-amber-900 dark:text-amber-200">
+   223→            {faRial(analysis.total)}
+   224→          </span>
+   225→        </div>
+   226→      </DialogContent>
+   227→    </Dialog>
+   228→  );
+   229→}
+   230→
+   231→function FactorCard({
+   232→  label,
+   233→  value,
+   234→  pct,
+   235→  color,
+   236→}: {
+   237→  label: string;
+   238→  value: number;
+   239→  pct: number;
+   240→  color: string;
+   241→}) {
+   242→  return (
+   243→    <div className="rounded-lg border p-3">
+   244→      <div className="mb-1 flex items-center gap-1.5">
+   245→        <span className={cn("size-2 rounded-full", color)} />
+   246→        <span className="text-[11px] text-muted-foreground">{label}</span>
+   247→      </div>
+   248→      <div className="text-sm font-semibold tabular-nums">{faRial(value)}</div>
+   249→      <div className="mt-1 text-[10px] text-muted-foreground">{toFa(pct.toFixed(1))}٪</div>
+   250→    </div>
+   251→  );
+   252→}
+   253→
+   254→// ─── Descending Price Dialog (بخشنامه ۴۹۵۱) ─────────────────────────
+   255→function DescendingPriceDialog({ item }: { item: FinancialSheetItem }) {
+   256→  const [open, setOpen] = React.useState(false);
+   257→  const [threshold, setThreshold] = React.useState("0.8");
+   258→
+   259→  const result = React.useMemo(() => {
+   260→    const t = parseFaNumber(threshold);
+   261→    return descendingPriceAdjustment(item.totalAmount, t > 0 && t <= 1 ? t : 0.8);
+   262→  }, [item.totalAmount, threshold]);
+   263→
+   264→  return (
+   265→    <Dialog open={open} onOpenChange={setOpen}>
+   266→      <Button
+   267→        variant="outline"
+   268→        size="sm"
+   269→        className="h-9"
+   270→        onClick={() => setOpen(true)}
+   271→      >
+   272→        <TrendingDown className="size-4" />
+   273→        نزولی بها
+   274→      </Button>
+   275→      <DialogContent className="sm:max-w-md">
+   276→        <DialogHeader>
+   277→          <DialogTitle className="flex items-center gap-2">
+   278→            <TrendingDown className="size-5 text-amber-600" />
+   279→            نزولی بها (بخشنامه ۴۹۵۱)
+   280→          </DialogTitle>
+   281→          <DialogDescription>
+   282→            محاسبه‌ی مبلغ نهایی پس از اعمال کسور نزولی بر اساس آستانه‌ی تعیین‌شده.
+   283→          </DialogDescription>
+   284→        </DialogHeader>
+   285→
+   286→        <div className="grid gap-2">
+   287→          <label className="text-xs font-medium text-muted-foreground">آستانه‌ی نزولی (۰ تا ۱)</label>
+   288→          <Input
+   289→            type="text"
+   290→            inputMode="decimal"
+   291→            dir="ltr"
+   292→            value={threshold}
+   293→            onChange={(e) => setThreshold(e.target.value)}
+   294→            className="h-9 text-left tabular-nums"
+   295→          />
+   296→        </div>
+   297→
+   298→        <div className="space-y-2 rounded-lg border bg-muted/30 p-3 text-sm">
+   299→          <Row label="مبلغ پایه" value={faRial(item.totalAmount)} />
+   300→          <Row
+   301→            label={`کسر نزولی (${toFa((parseFaNumber(threshold) * 100).toFixed(0))}٪)`}
+   302→            value={`− ${faRial(result.adjustment)}`}
+   303→            color="text-rose-600"
+   304→          />
+   305→          <Separator />
+   306→          <Row label="مبلغ نهایی" value={faRial(result.finalAmount)} bold />
+   307→        </div>
+   308→
+   309→        <Alert className="border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-950/30">
+   310→          <Info className="size-4" />
+   311→          <AlertTitle className="text-xs">یادداشت</AlertTitle>
+   312→          <AlertDescription className="text-[11px]">
+   313→            فرمول: مبلغ‌نهایی = مبلغ‌پایه × آستانه. در صورت نزولی شدن بهای تمام‌شده، مابه‌التفاوت از صورت‌وضعیت کسر می‌شود.
+   314→          </AlertDescription>
+   315→        </Alert>
+   316→      </DialogContent>
+   317→    </Dialog>
+   318→  );
+   319→}
+   320→
+   321→function Row({
+   322→  label,
+   323→  value,
+   324→  bold,
+   325→  color,
+   326→}: {
+   327→  label: string;
+   328→  value: string;
+   329→  bold?: boolean;
+   330→  color?: string;
+   331→}) {
+   332→  return (
+   333→    <div className="flex items-center justify-between">
+   334→      <span className={cn("text-xs text-muted-foreground", bold && "text-sm font-medium text-foreground")}>
+   335→        {label}
+   336→      </span>
+   337→      <span
+   338→        className={cn(
+   339→          "tabular-nums",
+   340→          bold ? "text-base font-bold" : "text-sm font-medium",
+   341→          color,
+   342→        )}
+   343→      >
+   344→        {value}
+   345→      </span>
+   346→    </div>
+   347→  );
+   348→}
+   349→
+   350→// ─── Inline Unit Price Editor (Optimistic) ──────────────────────────
+   351→function UnitPriceCell({
+   352→  item,
+   353→  onCommit,
+   354→}: {
+   355→  item: FinancialSheetItem;
+   356→  onCommit: (itemId: string, unitPrice: number) => void;
+   357→}) {
+   358→  const [value, setValue] = React.useState(toFa(item.unitPrice.toString()));
+   359→  const [editing, setEditing] = React.useState(false);
+   360→  const inputRef = React.useRef<HTMLInputElement>(null);
+   361→
+   362→  React.useEffect(() => {
+   363→    if (!editing) setValue(toFa(item.unitPrice.toString()));
+   364→  }, [item.unitPrice, editing]);
+   365→
+   366→  React.useEffect(() => {
+   367→    if (editing && inputRef.current) {
+   368→      inputRef.current.focus();
+   369→      inputRef.current.select();
+   370→    }
+   371→  }, [editing]);
+   372→
+   373→  const commit = () => {
+   374→    const n = parseFaNumber(value);
+   375→    setEditing(false);
+   376→    if (n !== item.unitPrice) {
+   377→      onCommit(item.id, n);
+   378→    } else {
+   379→      setValue(toFa(item.unitPrice.toString()));
+   380→    }
+   381→  };
+   382→
+   383→  if (!item.isStarred) {
+   384→    // Read-only — only starred items allow editing
+   385→    return (
+   386→      <span className="tabular-nums text-sm text-muted-foreground" title="فقط آیتم‌های ستاره‌دار قابل ویرایش">
+   387→        {faNum(item.unitPrice)}
+   388→      </span>
+   389→    );
+   390→  }
+   391→
+   392→  if (!editing) {
+   393→    return (
+   394→      <button
+   395→        type="button"
+   396→        onClick={() => setEditing(true)}
+   397→        className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-left tabular-nums text-sm font-medium text-amber-900 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
+   398→        title="برای ویرایش کلیک کنید"
+   399→      >
+   400→        {faNum(item.unitPrice)}
+   401→      </button>
+   402→    );
+   403→  }
+   404→
+   405→  return (
+   406→    <Input
+   407→      ref={inputRef}
+   408→      type="text"
+   409→      inputMode="decimal"
+   410→      dir="ltr"
+   411→      value={value}
+   412→      onChange={(e) => setValue(e.target.value)}
+   413→      onBlur={commit}
+   414→      onKeyDown={(e) => {
+   415→        if (e.key === "Enter") commit();
+   416→        if (e.key === "Escape") {
+   417→          setValue(toFa(item.unitPrice.toString()));
+   418→          setEditing(false);
+   419→        }
+   420→      }}
+   421→      className="h-9 w-32 text-left tabular-nums"
+   422→    />
+   423→  );
+   424→}
+   425→
+   426→// ─── Reference Toggle (Badge-based) ─────────────────────────────────
+   427→function ReferenceToggle({
+   428→  item,
+   429→  onCommit,
+   430→}: {
+   431→  item: FinancialSheetItem;
+   432→  onCommit: (itemId: string, reference: string) => void;
+   433→}) {
+   434→  const current = REFERENCES.find((r) => r.value === item.reference) || REFERENCES[0];
+   435→  const cycle = () => {
+   436→    const idx = REFERENCES.findIndex((r) => r.value === item.reference);
+   437→    const next = REFERENCES[(idx + 1) % REFERENCES.length];
+   438→    onCommit(item.id, next.value);
+   439→  };
+   440→  return (
+   441→    <button
+   442→      type="button"
+   443→      onClick={cycle}
+   444→      title="مرجع قیمت — برای تغییر کلیک کنید"
+   445→      className={cn(
+   446→        "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium transition-transform hover:scale-105",
+   447→        current.color,
+   448→      )}
+   449→    >
+   450→      {current.label}
+   451→    </button>
+   452→  );
+   453→}
+   454→
+   455→// ─── Chapter Selector ───────────────────────────────────────────────
+   456→function ChapterSelector({
+   457→  item,
+   458→  onCommit,
+   459→}: {
+   460→  item: FinancialSheetItem;
+   461→  onCommit: (itemId: string, chapterNo: number) => void;
+   462→}) {
+   463→  return (
+   464→    <Select
+   465→      value={String(item.chapterNo)}
+   466→      onValueChange={(v) => onCommit(item.id, Number(v))}
+   467→    >
+   468→      <SelectTrigger size="sm" className="h-8 w-20 gap-1 text-[11px]">
+   469→        <Hash className="size-3 opacity-50" />
+   470→        <SelectValue />
+   471→      </SelectTrigger>
+   472→      <SelectContent>
+   473→        {CHAPTERS.map((c) => (
+   474→          <SelectItem key={c} value={String(c)} className="text-xs">
+   475→            <span className="font-mono">{toFa(c)}</span>
+   476→            <span className="mr-1 text-muted-foreground">— {CHAPTER_TITLES[c]}</span>
+   477→          </SelectItem>
+   478→        ))}
+   479→      </SelectContent>
+   480→    </Select>
+   481→  );
+   482→}
+   483→
+   484→// ─── Main View ───────────────────────────────────────────────────────
+   485→export function FinancialSheetView() {
+   486→  const projectId = useAppStore((s) => s.selectedProjectId);
+   487→  const { toast } = useToast();
+   488→  const qc = useQueryClient();
+   489→
+   490→  const { data, isLoading, isError, refetch, isFetching } = useQuery<ProjectResponse>({
+   491→    queryKey: ["project", projectId],
+   492→    queryFn: async () => {
+   493→      const r = await fetch(`/api/projects/${projectId}`);
+   494→      if (!r.ok) throw new Error("بارگذاری پروژه ناموفق بود");
+   495→      return r.json();
+   496→    },
+   497→    enabled: !!projectId,
+   498→  });
+   499→
+   500→  const items = data?.project?.financialSheet ?? [];
+   501→  const total = items.reduce((s, i) => s + (i.totalAmount || 0), 0);
+   502→  const starredCount = items.filter((i) => i.isStarred).length;
+   503→
+   504→  // ─── Optimistic mutation for unit price + star toggle + ref + chapter ───
+   505→  const updateMutation = useMutation({
+   506→    mutationFn: async (payload: {
+   507→      itemId: string;
+   508→      unitPrice?: number;
+   509→      isStarred?: boolean;
+   510→      reference?: string;
+   511→      chapterNo?: number;
+   512→      relatedCode?: string;
+   513→    }) => {
+   514→      const r = await fetch(`/api/projects/${projectId}/financial-sheet`, {
+   515→        method: "PUT",
+   516→        headers: { "Content-Type": "application/json" },
+   517→        body: JSON.stringify(payload),
+   518→      });
+   519→      if (!r.ok) throw new Error(await r.text());
+   520→      return r.json() as Promise<{ item: FinancialSheetItem; cascade: CascadeResult }>;
+   521→    },
+   522→    onMutate: async (payload) => {
+   523→      await qc.cancelQueries({ queryKey: ["project", projectId] });
+   524→      const prev = qc.getQueryData<ProjectResponse>(["project", projectId]);
+   525→      if (prev && payload.unitPrice !== undefined) {
+   526→        // Optimistic: update unitPrice + recompute totalAmount locally
+   527→        const newItems = prev.project.financialSheet.map((it) =>
+   528→          it.id === payload.itemId
+   529→            ? { ...it, unitPrice: payload.unitPrice!, totalAmount: it.quantity * payload.unitPrice! }
+   530→            : it,
+   531→        );
+   532→        qc.setQueryData<ProjectResponse>(["project", projectId], {
+   533→          ...prev,
+   534→          project: { ...prev.project, financialSheet: newItems },
+   535→        });
+   536→      }
+   537→      return { prev };
+   538→    },
+   539→    onError: (err: Error, _vars, ctx) => {
+   540→      if (ctx?.prev) {
+   541→        qc.setQueryData(["project", projectId], ctx.prev);
+   542→      }
+   543→      toast({
+   544→        variant: "destructive",
+   545→        title: "خطا در به‌روزرسانی",
+   546→        description: err.message,
+   547→      });
+   548→    },
+   549→    onSettled: (data) => {
+   550→      qc.invalidateQueries({ queryKey: ["project", projectId] });
+   551→      if (data?.cascade) {
+   552→        toast({
+   553→          title: "به‌روزرسانی شد",
+   554→          description: (
+   555→            <span className="text-xs leading-5">
+   556→              مبلغ کل برگه مالی: <b>{faMoney(data.cascade.financialSheetTotal)}</b> — فصول:{" "}
+   557→              <b>{toFa(data.cascade.chaptersUpdated)}</b>
+   558→            </span>
+   559→          ),
+   560→        });
+   561→      }
+   562→    },
+   563→  });
+   564→
+   565→  // ─── Empty / loading / error states ───
+   566→  if (!projectId) {
+   567→    return (
+   568→      <EmptyState
+   569→        icon={<Calculator className="size-8" />}
+   570→        title="پروژه‌ای انتخاب نشده"
+   571→        description="یک پروژه را از نوار کناری انتخاب کنید تا برگه مالی آن نمایش داده شود."
+   572→      />
+   573→    );
+   574→  }
+   575→
+   576→  if (isLoading) {
+   577→    return <FinancialSheetSkeleton />;
+   578→  }
+   579→
+   580→  if (isError) {
+   581→    return (
+   582→      <EmptyState
+   583→        icon={<RefreshCw className="size-8" />}
+   584→        title="خطا در بارگذاری"
+   585→        description="بارگذاری پروژه ناموفق بود."
+   586→        action={
+   587→          <Button variant="outline" className="h-9" onClick={() => refetch()}>
+   588→            <RefreshCw className="size-4" />
+   589→            تلاش مجدد
+   590→          </Button>
+   591→        }
+   592→      />
+   593→    );
+   594→  }
+   595→
+   596→  return (
+   597→    <div className="space-y-4 p-4 md:p-6">
+   598→      {/* Header */}
+   599→      <div className="flex flex-wrap items-end justify-between gap-3">
+   600→        <div>
+   601→          <h2 className="flex items-center gap-2 text-xl font-bold tracking-tight">
+   602→            <Calculator className="size-5 text-amber-600" />
+   603→            برگه مالی
+   604→          </h2>
+   605→          <p className="mt-1 text-xs text-muted-foreground">
+   606→            پروژه: <span className="font-medium text-foreground">{data?.project.name}</span>
+   607→          </p>
+   608→        </div>
+   609→        <div className="flex items-center gap-2">
+   610→          <Badge
+   611→            variant="secondary"
+   612→            className="h-9 gap-1.5 px-3"
+   613→            title="آیتم‌های ستاره‌دار با قیمت اختصاصی"
+   614→          >
+   615→            <Star className="size-3.5 fill-amber-500 text-amber-500" />
+   616→            {toFa(starredCount)} ستاره‌دار
+   617→          </Badge>
+   618→          <Button
+   619→            variant="outline"
+   620→            size="sm"
+   621→            className="h-9"
+   622→            onClick={() => refetch()}
+   623→            disabled={isFetching}
+   624→          >
+   625→            <RefreshCw className={cn("size-4", isFetching && "animate-spin")} />
+   626→            بازخوانی
+   627→          </Button>
+   628→        </div>
+   629→      </div>
+   630→
+   631→      {/* Table */}
+   632→      {items.length === 0 ? (
+   633→        <EmptyState
+   634→          icon={<Calculator className="size-8" />}
+   635→          title="برگه مالی خالی است"
+   636→          description="ابتدا در تب «ریزمتره» ردیف‌هایی اضافه کنید. پس از آن، برگه مالی به‌صورت خودکار از تجمیع ریزمتره ساخته می‌شود."
+   637→        />
+   638→      ) : (
+   639→        <Card className="overflow-hidden">
+   640→          <CardContent className="p-0">
+   641→            <div className="max-h-[70vh] overflow-y-auto">
+   642→              <Table className="boq-table">
+   643→                <TableHeader className="sticky top-0 z-10 bg-muted/60 backdrop-blur">
+   644→                  <TableRow className="border-b hover:bg-transparent">
+   645→                    <TableHead className="h-10 w-12 bg-muted/60 px-2 text-center font-medium">#</TableHead>
+   646→                    <TableHead className="h-10 bg-muted/60 px-2 font-medium">کد</TableHead>
+   647→                    <TableHead className="h-10 bg-muted/60 px-2 font-medium">شرح</TableHead>
+   648→                    <TableHead className="h-10 w-20 bg-muted/60 px-2 font-medium">واحد</TableHead>
+   649→                    <TableHead className="h-10 w-24 bg-muted/60 px-2 text-left font-medium">مقدار</TableHead>
+   650→                    <TableHead className="h-10 w-32 bg-muted/60 px-2 text-left font-medium">قیمت واحد</TableHead>
+   651→                    <TableHead className="h-10 w-36 bg-muted/60 px-2 text-left font-medium">مبلغ کل</TableHead>
+   652→                    <TableHead className="h-10 w-24 bg-muted/60 px-2 text-center font-medium">فصل</TableHead>
+   653→                    <TableHead className="h-10 w-20 bg-muted/60 px-2 text-center font-medium">مرجع</TableHead>
+   654→                    <TableHead className="h-10 w-12 bg-muted/60 px-2 text-center font-medium">ستاره</TableHead>
+   655→                    <TableHead className="h-10 w-44 bg-muted/60 px-2 text-center font-medium">ابزار</TableHead>
+   656→                  </TableRow>
+   657→                </TableHeader>
+   658→                <TableBody>
+   659→                  {items.map((item, idx) => (
+   660→                    <TableRow key={item.id} className="hover:bg-muted/30">
+   661→                      <TableCell className="px-2 text-center text-xs text-muted-foreground">
+   662→                        {toFa(idx + 1)}
+   663→                      </TableCell>
+   664→                      <TableCell className="px-2">
+   665→                        <Badge variant="outline" className="font-mono text-[11px]">
+   666→                          {item.code}
+   667→                        </Badge>
+   668→                      </TableCell>
+   669→                      <TableCell className="max-w-[28vw] px-2">
+   670→                        <div className="truncate text-sm" title={item.description}>
+   671→                          {item.description}
+   672→                        </div>
+   673→                      </TableCell>
+   674→                      <TableCell className="px-2 text-xs text-muted-foreground">{item.unit}</TableCell>
+   675→                      <TableCell className="px-2 text-left text-sm tabular-nums">
+   676→                        {faNum(item.quantity, 2)}
+   677→                      </TableCell>
+   678→                      <TableCell className="px-2 text-left">
+   679→                        <UnitPriceCell
+   680→                          item={item}
+   681→                          onCommit={(itemId, unitPrice) =>
+   682→                            updateMutation.mutate({ itemId, unitPrice })
+   683→                          }
+   684→                        />
+   685→                        {updateMutation.isPending && updateMutation.variables?.itemId === item.id && (
+   686→                          <Loader2 className="mt-1 inline size-3 animate-spin text-amber-500" />
+   687→                        )}
+   688→                      </TableCell>
+   689→                      <TableCell className="px-2 text-left text-sm font-semibold tabular-nums">
+   690→                        {faRial(item.totalAmount)}
+   691→                      </TableCell>
+   692→                      <TableCell className="px-2 text-center">
+   693→                        <ChapterSelector
+   694→                          item={item}
+   695→                          onCommit={(itemId, chapterNo) =>
+   696→                            updateMutation.mutate({ itemId, chapterNo })
+   697→                          }
+   698→                        />
+   699→                      </TableCell>
+   700→                      <TableCell className="px-2 text-center">
+   701→                        <ReferenceToggle
+   702→                          item={item}
+   703→                          onCommit={(itemId, reference) =>
+   704→                            updateMutation.mutate({ itemId, reference })
+   705→                          }
+   706→                        />
+   707→                      </TableCell>
+   708→                      <TableCell className="px-2 text-center">
+   709→                        <Button
+   710→                          variant="ghost"
+   711→                          size="icon"
+   712→                          className={cn(
+   713→                            "size-9",
+   714→                            item.isStarred
+   715→                              ? "text-amber-500 hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-amber-950/40"
+   716→                              : "text-muted-foreground hover:bg-muted",
+   717→                          )}
+   718→                          aria-label={item.isStarred ? "حذف ستاره" : "ستاره‌دار کردن"}
+   719→                          onClick={() =>
+   720→                            updateMutation.mutate({ itemId: item.id, isStarred: !item.isStarred })
+   721→                          }
+   722→                        >
+   723→                          <Star className={cn("size-4", item.isStarred && "fill-amber-500")} />
+   724→                        </Button>
+   725→                      </TableCell>
+   726→                      <TableCell className="px-2">
+   727→                        <div className="flex items-center justify-center gap-1">
+   728→                          <AnalysisDialog item={item} />
+   729→                          <DescendingPriceDialog item={item} />
+   730→                        </div>
+   731→                      </TableCell>
+   732→                    </TableRow>
+   733→                  ))}
+   734→                </TableBody>
+   735→              </Table>
+   736→            </div>
+   737→
+   738→            {/* Sticky total footer */}
+   739→            <div className="sticky bottom-0 z-10 flex items-center justify-between gap-3 border-t bg-gradient-to-l from-amber-50 to-orange-50 px-4 py-3 dark:from-amber-950/40 dark:to-orange-950/30">
+   740→              <div className="flex items-center gap-3">
+   741→                <div className="flex size-9 items-center justify-center rounded-lg bg-amber-500/10 text-amber-700 dark:text-amber-300">
+   742→                  <Calculator className="size-4" />
+   743→                </div>
+   744→                <div>
+   745→                  <div className="text-[11px] text-muted-foreground">مبلغ کل برگه مالی</div>
+   746→                  <div className="text-[10px] text-muted-foreground">
+   747→                    {toFa(items.length)} ردیف — {toFa(starredCount)} ستاره‌دار
+   748→                  </div>
+   749→                </div>
+   750→              </div>
+   751→              <div className="text-left">
+   752→                <div className="text-xl font-bold tabular-nums text-amber-900 dark:text-amber-200">
+   753→                  {faMoney(total)}
+   754→                </div>
+   755→                <div className="text-[10px] text-muted-foreground tabular-nums">
+   756→                  {faRial(total)}
+   757→                </div>
+   758→              </div>
+   759→            </div>
+   760→          </CardContent>
+   761→        </Card>
+   762→      )}
+   763→    </div>
+   764→  );
+   765→}
+   766→
+   767→// ─── Skeleton ────────────────────────────────────────────────────────
+   768→function FinancialSheetSkeleton() {
+   769→  return (
+   770→    <div className="space-y-4 p-4 md:p-6">
+   771→      <div className="flex items-center justify-between">
+   772→        <Skeleton className="h-8 w-40" />
+   773→        <Skeleton className="h-9 w-32" />
+   774→      </div>
+   775→      <Card>
+   776→        <CardContent className="p-0">
+   777→          <div className="max-h-[70vh] overflow-hidden">
+   778→            <Table>
+   779→              <TableHeader>
+   780→                <TableRow className="hover:bg-transparent">
+   781→                  {Array.from({ length: 11 }).map((_, i) => (
+   782→                    <TableHead key={i} className="bg-muted/40">
+   783→                      <Skeleton className="h-4 w-12" />
+   784→                    </TableHead>
+   785→                  ))}
+   786→                </TableRow>
+   787→              </TableHeader>
+   788→              <TableBody>
+   789→                {Array.from({ length: 6 }).map((_, r) => (
+   790→                  <TableRow key={r}>
+   791→                    {Array.from({ length: 11 }).map((_, c) => (
+   792→                      <TableCell key={c}>
+   793→                        <Skeleton className="h-6 w-full" />
+   794→                      </TableCell>
+   795→                    ))}
+   796→                  </TableRow>
+   797→                ))}
+   798→              </TableBody>
+   799→            </Table>
+   800→          </div>
+   801→        </CardContent>
+   802→      </Card>
+   803→    </div>
+   804→  );
+   805→}
+   806→
+   807→// ─── Empty State ─────────────────────────────────────────────────────
+   808→function EmptyState({
+   809→  icon,
+   810→  title,
+   811→  description,
+   812→  action,
+   813→}: {
+   814→  icon: React.ReactNode;
+   815→  title: string;
+   816→  description: string;
+   817→  action?: React.ReactNode;
+   818→}) {
+   819→  return (
+   820→    <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 p-6 text-center">
+   821→      <div className="flex size-16 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+   822→        {icon}
+   823→      </div>
+   824→      <h3 className="text-lg font-semibold">{title}</h3>
+   825→      <p className="max-w-md text-sm text-muted-foreground">{description}</p>
+   826→      {action}
+   827→    </div>
+   828→  );
+   829→}
+   830→
+   831→export default FinancialSheetView;
+   832→
