@@ -19,15 +19,22 @@ datasource db {
 model Tenant {
   id            String   @id @default(cuid())
   name          String
+  slug          String?  @unique // برای زیردامنه‌ی آینده: tenant-slug.civilic.ir
   logoUrl       String?
   letterheadUrl String?
   signatures    String   @default("[]")
+  isActive      Boolean  @default(true) // فعال/غیرفعال توسط مدیر سامانه
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   users         User[]
   projects      Project[]
   organizations Organization[]
+  members       TenantMember[]
+  subscriptions Subscription[]
+  invoices      Invoice[]
+  usageMetrics  UsageMetric[]
+  roles         Role[]
 }
 
 enum UserRole {
@@ -47,14 +54,20 @@ model User {
   passwordHash   String?
   isActive       Boolean  @default(true)
   avatarUrl      String?
+  // ── دسترسی سطح پلتفرم (مدیر سامانه/پشتیبان) ──
+  isPlatformAdmin Boolean @default(false)
+  platformRole   String?  // platform_owner | platform_admin | support_admin | billing_admin | readonly_support
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   organization   Organization?  @relation(fields: [organizationId], references: [id])
+  tenantMemberships       TenantMember[]
+  organizationMemberships OrganizationMember[]
 
   @@index([tenantId])
   @@index([organizationId])
+  @@index([isPlatformAdmin])
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -75,6 +88,7 @@ model Organization {
   tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   users       User[]
   projectParties ProjectParty[]
+  members     OrganizationMember[]
 
   @@index([tenantId])
 }
@@ -3157,4 +3171,221 @@ model CorrespondenceRecipient {
 
   @@unique([letterId, partyId])
   @@index([letterId])
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  لایه‌ی SaaS — چندمستاجرتی، عضویت، نقش‌های پیکربندی‌پذیر، اشتراک و صورتحساب
+//  (پلتفرم Civilic عمومی است؛ خاتم فقط داده‌ی دمو است)
+// ═══════════════════════════════════════════════════════════
+
+/** عضویت کاربر در یک Tenant (workspace مشتری) */
+model TenantMember {
+  id        String   @id @default(cuid())
+  tenantId  String
+  userId    String
+  role      String   @default("tenant_member") // tenant_owner | tenant_admin | tenant_member
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId])
+  @@index([tenantId])
+  @@index([userId])
+}
+
+/** عضویت کاربر در یک Organization (شرکت) */
+model OrganizationMember {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  role           String   @default("org_member") // org_owner | org_admin | org_member
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+}
+
+/** قالب نقش پیش‌فرض (سراسری) — مبنای ساخت Role در هر tenant */
+model RoleTemplate {
+  id             String   @id @default(cuid())
+  key            String   @unique // employer_project_manager | resident_supervisor | ...
+  scope          String   // PLATFORM | TENANT | PROJECT
+  partyType      String?  // EMPLOYER | CONSULTANT | CONTRACTOR | null
+  labelFa        String
+  permissionsJson String  @default("[]") // آرایه‌ی کلیدهای canonical permission
+  isSystem       Boolean  @default(true)
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+}
+
+/** نقش قابل‌سفارشی‌سازی در سطح tenant (کپی از RoleTemplate و قابل ویرایش) */
+model Role {
+  id             String   @id @default(cuid())
+  tenantId       String?  // null = نقش سراسری پلتفرم
+  key            String
+  scope          String   // PLATFORM | TENANT | PROJECT
+  partyType      String?
+  labelFa        String
+  permissionsJson String  @default("[]")
+  isSystem       Boolean  @default(false)
+  templateKey    String?  // مرجع به RoleTemplate.key
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant         Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, key])
+  @@index([tenantId])
+}
+
+/** پلن اشتراک (سراسری) */
+model Plan {
+  id                    String   @id @default(cuid())
+  key                   String   @unique // trial | basic | pro | enterprise
+  name                  String
+  monthlyPrice          Int      @default(0) // ریال
+  yearlyPrice           Int      @default(0)
+  maxProjects           Int      @default(1)
+  maxUsers              Int      @default(5)
+  maxStorageMb          Int      @default(1024)
+  maxTexsaImportsPerMonth Int    @default(1)
+  maxExportsPerMonth    Int      @default(10)
+  enabledFeaturesJson   String   @default("[]")
+  isActive              Boolean  @default(true)
+  sortOrder             Int      @default(0)
+  createdAt             DateTime @default(now())
+
+  subscriptions         Subscription[]
+}
+
+/** اشتراک یک tenant در یک پلن */
+model Subscription {
+  id                 String    @id @default(cuid())
+  tenantId           String
+  planId             String
+  status             String    @default("TRIALING") // TRIALING | ACTIVE | PAST_DUE | SUSPENDED | CANCELLED
+  billingCycle       String    @default("MONTHLY")  // MONTHLY | YEARLY
+  startedAt          DateTime  @default(now())
+  trialEndsAt        DateTime?
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  cancelledAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  tenant             Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan               Plan   @relation(fields: [planId], references: [id])
+  invoices           Invoice[]
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+/** صورتحساب SaaS (پلتفرم، نه صورت‌وضعیت پروژه) */
+model Invoice {
+  id             String   @id @default(cuid())
+  tenantId       String
+  subscriptionId String?
+  number         String   @unique
+  amount         Int      @default(0) // ریال
+  status         String   @default("DRAFT") // DRAFT | ISSUED | PAID | OVERDUE | VOID
+  issuedAt       DateTime?
+  dueAt          DateTime?
+  paidAt         DateTime?
+  note           String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
+  transactions   PaymentTransaction[]
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+/** تراکنش پرداخت صورتحساب SaaS (ثبت دستی در MVP) */
+model PaymentTransaction {
+  id              String   @id @default(cuid())
+  invoiceId       String
+  amount          Int
+  method          String   @default("MANUAL") // MANUAL | GATEWAY | TRANSFER
+  referenceNumber String?
+  status          String   @default("SUCCESS") // SUCCESS | PENDING | FAILED
+  createdAt       DateTime @default(now())
+
+  invoice         Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+/** سنجه‌ی مصرف tenant در یک دوره */
+model UsageMetric {
+  id                String   @id @default(cuid())
+  tenantId          String
+  period            String   // مثل 1403-05
+  projectsCount     Int      @default(0)
+  usersCount        Int      @default(0)
+  storageUsedMb     Int      @default(0)
+  texsaImportsCount Int      @default(0)
+  exportsCount      Int      @default(0)
+  messagesCount     Int      @default(0)
+  documentsCount    Int      @default(0)
+  createdAt         DateTime @default(now())
+
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, period])
+  @@index([tenantId])
+}
+
+/** پرچم ویژگی (سراسری یا tenant-scoped) */
+model FeatureFlag {
+  id          String   @id @default(cuid())
+  key         String
+  tenantId    String?  // null = سراسری
+  enabled     Boolean  @default(false)
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([key, tenantId])
+}
+
+/** لاگ ممیزی سطح پلتفرم (اقدامات مدیر سامانه) */
+model PlatformAuditLog {
+  id         String   @id @default(cuid())
+  actorId    String
+  actorName  String
+  action     String   // TENANT_CREATE | TENANT_DISABLE | IMPERSONATE | INVOICE_PAID | ...
+  targetType String?  // TENANT | USER | PLAN | INVOICE | ...
+  targetId   String?
+  metaJson   String   @default("{}")
+  createdAt  DateTime @default(now())
+
+  @@index([actorId])
+  @@index([action])
+}
+
+/** اعطای دسترسی پشتیبانی/impersonation موقت با ممیزی */
+model SupportAccessGrant {
+  id          String   @id @default(cuid())
+  tenantId    String
+  grantedToId String   // کاربر پشتیبان
+  grantedById String   // مدیر سامانه
+  reason      String?
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([grantedToId])
 }

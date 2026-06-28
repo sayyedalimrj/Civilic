@@ -1214,3 +1214,57 @@ Agent: Kiro (Claude Opus 4.8). همه‌ی تغییرات با `tsc --noEmit`، 
 - چون DB در sandbox نبود، `db:seed`/`db:deploy` اجرا و راستی‌آزمایی نشده؛ ممکن است نیاز به جزئی‌اصلاح هنگام اولین اجرا روی Postgres باشد (هرچند با schema typecheck شده‌اند).
 - مسیرهای قدیمی API (مثل `transition-v2`) هنوز userId را از body می‌گیرند (بدون session)؛ مسیر جدید `/workflow` از session استفاده می‌کند. یکپارچه‌سازی کامل مسیرهای قدیمی با session باقی مانده.
 - `next-auth/middleware` در Next 16 با تابع صریح `getToken` جایگزین شد (re-export به‌عنوان function شناخته نمی‌شد).
+
+
+---
+
+## Multi-Tenant SaaS / Platform Admin Correction
+Agent: Kiro (Claude Opus 4.8). راستی‌آزمایی: `tsc --noEmit` ۰ خطا، `eslint` بدون خطا، `prisma validate/generate` موفق، `next build` موفق (۳۸ صفحه، شامل `/admin` و `/api/admin/*`).
+
+### اصلاح محصول (مهم)
+- **Civilic یک محصول عمومی SaaS چندمستاجرتی است، نه سامانه‌ی مخصوص خاتم.** پروژه‌ی «پارکینگ شرقی خاتم» و فایل `Important project.svzt` فقط: (۱) داده‌ی دمو، (۲) مرجع سازگاری تکسا، (۳) fixture تست import/export هستند.
+- هیچ نام/کاربر/پروژه‌ی ثابتی در کد hard-code نیست؛ همه فقط در seed/دمو هستند و قابل ویرایش/حذف‌اند.
+- دو سطح محصول جدا شد: **اپ کاربری** (`/`, دامنه `app.civilic.ir`) و **پنل مدیر سامانه** (`/admin`, دامنه `admin.civilic.ir`).
+
+### چه چیزی اضافه/تغییر کرد
+**مدل داده‌ی SaaS** (`prisma/schema.prisma`) — افزایشی:
+- `TenantMember`, `OrganizationMember`, `RoleTemplate`, `Role`, `Plan`, `Subscription`, `Invoice`, `PaymentTransaction`, `UsageMetric`, `FeatureFlag`, `PlatformAuditLog`, `SupportAccessGrant`.
+- `Tenant`: `slug` (یکتا، برای زیردامنه‌ی آینده) + `isActive` + روابط.
+- `User`: `isPlatformAdmin` + `platformRole` + عضویت‌های tenant/organization.
+- نکته‌ی کلیدی: نوع طرف (EMPLOYER/CONSULTANT/CONTRACTOR) **پروژه‌محور** است؛ یک Organization می‌تواند در پروژه‌های مختلف نقش متفاوت داشته باشد (از طریق `ProjectParty`).
+
+**نقش‌های پیکربندی‌پذیر** (`src/lib/auth/permissions.ts`):
+- نقش‌ها و پلتفرم‌رول‌ها + `requirePlatformPermission` + `getPlatformAccess`.
+- `resolveRolePermissions(role, tenantId)` **DB-driven**: ابتدا `Role` سفارشی tenant، سپس `RoleTemplate`، سپس fallback به ثابت‌های کد. کلیدهای permission در کد canonical می‌مانند اما تخصیص‌ها از DB می‌آیند.
+
+**پنل مدیر سامانه** (`src/app/admin/*` + `src/components/admin/admin-shell.tsx`):
+- layout با gate سمت‌سرور (فقط `isPlatformAdmin`؛ کاربر عادی به `/` هدایت می‌شود).
+- صفحات: داشبورد (آمار)، مستاجرها (لیست + ساخت + فعال/غیرفعال)، کاربران (لیست + ساخت)، پروژه‌ها (لیست سراسری)، پلن‌ها، صورتحساب‌ها (صدور + ثبت پرداخت دستی).
+
+**APIهای مدیریت** (`src/app/api/admin/*`) — همه با `requirePlatformPermission`:
+- `overview`, `tenants` (GET/POST), `tenants/[id]` (GET/PATCH فعال‌سازی)، `users` (GET/POST)، `projects` (GET)، `plans` (GET/POST upsert)، `invoices` (GET/POST)، `invoices/[id]/pay` (ثبت پرداخت). + `platformAudit` برای ممیزی.
+
+**ساخت پروژه‌ی عمومی و tenant-scoped** (`src/app/api/projects/route.ts`):
+- حذف `tenantId: "tenant-demo"` hard-coded. اکنون tenant از **session** گرفته می‌شود (مدیر سامانه می‌تواند tenant بدهد).
+- POST از طرفین اختیاری (انتخاب/ساخت سازمان) و ساخت خودکار کانال‌های پیش‌فرض پشتیبانی می‌کند. پروژه‌ها قابل ساخت مکرر برای هر مشتری/پروژه‌اند.
+
+**seed عمومی** (`prisma/seed.ts`):
+- RoleTemplateها (پروژه‌ای + پلتفرمی)، ۴ پلن (آزمایشی/پایه/حرفه‌ای/سازمانی)، tenant پلتفرم + `owner@civilic.ir`/`admin@civilic.ir`، tenant دمو «دموی Civilic» + اشتراک فعال + سنجه‌ی مصرف + صورتحساب نمونه، و سپس داده‌ی دموی خاتم زیر همان tenant (قابل حذف).
+
+**میدل‌ور و دامنه** (`src/middleware.ts` + `docs/deployment-domain-strategy.md`):
+- تشخیص host: `admin.`/`console.` → rewrite ریشه به `/admin`. محافظت از همه‌ی مسیرها با session.
+- سند استراتژی دامنه/استقرار اضافه شد (app vs admin vs زیردامنه‌ی tenant آینده).
+
+### تست
+- ✅ `tsc --noEmit` = ۰ خطا · ✅ `eslint .` = بدون خطا · ✅ `prisma validate/generate` · ✅ `next build` (۳۸ صفحه).
+- ورود مدیر سامانه: `owner@civilic.ir` / `admin@civilic.ir` (رمز `civilic`) → `/admin`.
+- ورود کاربر دمو: `preparer@sivantadbir.ir` و … (رمز `civilic`) → اپ کاربری.
+
+### پذیرش پوشش‌داده‌شده (پس از `db:deploy`+`db:seed` روی Postgres)
+ورود مدیر سامانه → پنل مدیریت → ساخت tenant/سازمان/کاربر → مدیریت پلن/صورتحساب/پرداخت دستی → ساخت پروژه‌ی جدید مستقل از خاتم (tenant-scoped). خاتم فقط یک پروژه‌ی دمو است.
+
+### کار باقی‌مانده (شفاف)
+- اتصال کامل wizard ساخت پروژه به مراحل طرفین/کاربران/workflow/تکسا (API آماده است؛ wizard فعلی فیلدهای پایه را می‌فرستد).
+- tenant-scoping بقیه‌ی routeهای قدیمی که هنوز `"tenant-demo"` را hard-code می‌کنند (dashboard/base-data/...) — باید مثل `/api/projects` به session منتقل شوند.
+- impersonation/SupportAccessGrant UI، usage metering خودکار، و اتصال feature flags.
+- اجرای واقعی `db:deploy`/`db:seed` (sandbox فاقد PostgreSQL است).

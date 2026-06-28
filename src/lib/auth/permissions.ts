@@ -316,3 +316,121 @@ export async function getProjectAccess(
     permissions: permissionsForRole(member.role),
   };
 }
+
+
+// ═══════════════════════════════════════════════════════════
+//  دسترسی سطح پلتفرم (مدیر سامانه Civilic) — جدا از دسترسی پروژه
+// ═══════════════════════════════════════════════════════════
+export type PlatformRole =
+  | "platform_owner"
+  | "platform_admin"
+  | "support_admin"
+  | "billing_admin"
+  | "readonly_support";
+
+export type PlatformPermission =
+  | "platform.dashboard.view"
+  | "tenant.create"
+  | "tenant.edit"
+  | "tenant.disable"
+  | "tenant.view"
+  | "platform.user.manage"
+  | "platform.org.manage"
+  | "platform.project.view"
+  | "role.manage"
+  | "plan.manage"
+  | "billing.manage"
+  | "invoice.create"
+  | "payment.register_saas"
+  | "usage.view"
+  | "feature_flag.manage"
+  | "support.impersonate"
+  | "platform.audit.view"
+  | "system.settings";
+
+export const ALL_PLATFORM_PERMISSIONS: PlatformPermission[] = [
+  "platform.dashboard.view", "tenant.create", "tenant.edit", "tenant.disable", "tenant.view",
+  "platform.user.manage", "platform.org.manage", "platform.project.view", "role.manage",
+  "plan.manage", "billing.manage", "invoice.create", "payment.register_saas", "usage.view",
+  "feature_flag.manage", "support.impersonate", "platform.audit.view", "system.settings",
+];
+
+export const PLATFORM_ROLE_PERMISSIONS: Record<PlatformRole, PlatformPermission[]> = {
+  platform_owner: [...ALL_PLATFORM_PERMISSIONS],
+  platform_admin: ALL_PLATFORM_PERMISSIONS.filter((p) => p !== "system.settings"),
+  support_admin: ["platform.dashboard.view", "tenant.view", "platform.project.view", "support.impersonate", "platform.audit.view", "usage.view"],
+  billing_admin: ["platform.dashboard.view", "tenant.view", "plan.manage", "billing.manage", "invoice.create", "payment.register_saas", "usage.view"],
+  readonly_support: ["platform.dashboard.view", "tenant.view", "platform.project.view", "usage.view"],
+};
+
+export const PLATFORM_ROLE_LABELS_FA: Record<PlatformRole, string> = {
+  platform_owner: "مالک سامانه",
+  platform_admin: "مدیر سامانه",
+  support_admin: "پشتیبان ارشد",
+  billing_admin: "مدیر مالی سامانه",
+  readonly_support: "پشتیبان فقط‌خواندنی",
+};
+
+export function platformPermissionsForRole(role: string | null | undefined): PlatformPermission[] {
+  if (!role) return [];
+  return PLATFORM_ROLE_PERMISSIONS[role as PlatformRole] ?? [];
+}
+
+/** بررسی دسترسی پلتفرم برای یک کاربر (از روی isPlatformAdmin + platformRole در DB). */
+export async function requirePlatformPermission(
+  userId: string,
+  perm: PlatformPermission
+): Promise<{ userId: string; platformRole: string; permissions: PlatformPermission[] }> {
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user || !user.isActive || !user.isPlatformAdmin || !user.platformRole) {
+    throw new PermissionError("دسترسی به پنل مدیریت سامانه ندارید");
+  }
+  const perms = platformPermissionsForRole(user.platformRole);
+  if (!perms.includes(perm)) {
+    throw new PermissionError();
+  }
+  return { userId: user.id, platformRole: user.platformRole, permissions: perms };
+}
+
+export async function getPlatformAccess(
+  userId: string
+): Promise<{ platformRole: string; permissions: PlatformPermission[] } | null> {
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user || !user.isActive || !user.isPlatformAdmin || !user.platformRole) return null;
+  return { platformRole: user.platformRole, permissions: platformPermissionsForRole(user.platformRole) };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  حل‌کننده‌ی نقش DB-driven (RoleTemplate/Role) با fallback به ثابت‌های کد
+//  کلیدهای permission در کد canonical هستند؛ تخصیص‌ها از DB می‌آیند.
+// ═══════════════════════════════════════════════════════════
+/**
+ * مجوزهای یک نقش پروژه را برمی‌گرداند:
+ *  1) اگر Role سفارشی tenant موجود باشد → از permissionsJson آن.
+ *  2) وگرنه اگر RoleTemplate موجود باشد → از permissionsJson آن.
+ *  3) وگرنه fallback به ROLE_PERMISSIONS کد.
+ */
+export async function resolveRolePermissions(role: string, tenantId?: string | null): Promise<Permission[]> {
+  // 1) Role سفارشی tenant
+  if (tenantId) {
+    const custom = await db.role.findFirst({ where: { tenantId, key: role } });
+    if (custom) {
+      try {
+        return JSON.parse(custom.permissionsJson) as Permission[];
+      } catch {
+        /* fallthrough */
+      }
+    }
+  }
+  // 2) RoleTemplate سراسری
+  const tmpl = await db.roleTemplate.findUnique({ where: { key: role } });
+  if (tmpl) {
+    try {
+      return JSON.parse(tmpl.permissionsJson) as Permission[];
+    } catch {
+      /* fallthrough */
+    }
+  }
+  // 3) fallback کد
+  return permissionsForRole(role);
+}
