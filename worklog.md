@@ -1383,3 +1383,41 @@ Agent: Kiro (Claude Opus 4.8). راستی‌آزمایی: `db:generate` ✅، `t
 - view اختصاصی redline برای **تعدیل** (مدل `AdjustmentItemReview` + رنگ‌ها آماده‌اند؛ فقط UI مشابه payment باقی است) و برای **متره** (`MeasurementItemReview`).
 - اتصال خودکار `markDependentsStale` به نقاط ویرایش بالادست (موتور آماده است؛ فراخوانی در همه‌ی mutationها باقی مانده).
 - parity کامل فرمول‌های ریالی با تکسا (فعلاً مقادیر import‌شده source of truth و علامت NEEDS_TEXSA_PARITY_REVIEW).
+
+
+---
+
+## Redline Review + Texsa Sequence Completion
+Agent: Kiro (Claude Opus 4.8). راستی‌آزمایی: `db:generate` ✅، `typecheck` ۰ خطا، `lint` بدون خطا، `next build` موفق (۳۹ صفحه)، `test:review` = ۱۷/۱۷ موفق.
+
+### Git / PR
+- **PR #1 (feat/civilic-product-completion) merged/closed.** برای جلوگیری از از دست رفتن کار، شاخه‌ی جدید **`feat/civilic-redline-completion`** از HEAD مرج‌شده ساخته شد و PR جدید علیه `main` باز می‌شود.
+- target branch: `main`. آخرین کامیت قبلی: `0f80bd1`.
+
+### تکمیل‌شده
+**رسیدگی ردیفی تعدیل** — `AdjustmentReviewView` + APIها (`GET/POST /api/projects/[id]/adjustment/review`, `POST .../adjustment/items/[rowId]/review`) + `addAdjustmentItemReview`/`adjustmentReviewSummary`. در تب «تعدیل» با toggle «محاسبه تعدیل / رسیدگی ردیفی».
+
+**رسیدگی ردیفی متره** — `MeasurementReviewView` + APIها (`GET .../measurement/review`, `POST .../measurement/items/[itemId]/review`) + `addMeasurementItemReview`. در تب «متره» با حالت سوم «رسیدگی ردیفی». اصلاح ریزمتره → خلاصه/برگه مالی/صورت‌وضعیت/تعدیل را `STALE` می‌کند.
+
+**پنل عمومی** — `RedlineReviewPanel` (جدول + فیلتر «همه/تغییریافته/نیازمند توضیح» + شمار تغییریافته + تایید گروهی + دیالوگ اصلاح با توضیح الزامی). `PaymentReviewView`/`Adjustment`/`Measurement` همگی از همین پنل استفاده می‌کنند (یکدست + Persian-only؛ بدون واژه‌ی انگلیسی Redline در UI عادی → «رسیدگی ردیفی»).
+
+**اتصال موتور وابستگی** — `markDependentsStale` در `addPaymentItemReview`/`addAdjustmentItemReview`/`addMeasurementItemReview` فراخوانی می‌شود (با حفظ LOCKED). `recalculateMeasurementSummary` اکنون مقدار مؤثر رسیدگی‌شده را استفاده می‌کند.
+
+**اکشن‌های بازمحاسبه** — `POST /api/projects/[id]/recalc` (با audit log) + دکمه‌ی «بروزرسانی» برای مراحل STALE در گزارش سازگاری (MEASUREMENT_SUMMARY/FINANCIAL_SHEET).
+
+**نشان‌های سازگاری/منبع** — `TexsaCompatibilityBadge`، `CalculationStatusBadge`، `ValueProvenanceTooltip`.
+
+**گزارش سازگاری تکسا (UI)** — `TexsaCompatReport` + `GET /api/projects/[id]/texsa-compat` (کامل‌بودن توالی، مراحل stale، ردیف‌های رسیدگی/تاییدشده، قابل‌خروجی/فقط‌Civilic، فیلتر بر اساس مرحله). در تب «گزارش و خروجی» نمایش داده می‌شود.
+
+**Seed نمونه‌های رسیدگی** — اقلام صورت‌وضعیت + ردیف‌های ریزمتره + نمونه‌ها: دوره۴ (مشاور تایید/اصلاح)، دوره۲ (کارفرما اصلاح نهایی)، دوره۳ (برگشتی با اصلاح مشاور)، تعدیل (اصلاح مشاور + تایید کارفرما)، متره (اصلاح مشاور)، و دو گره‌ی محاسبه‌ی STALE.
+
+**تست‌ها** — `.zscripts/test-review-logic.ts` (۱۷ assertion: حل مقدار مؤثر، خط‌خوردگی، انتشار stale). اسکریپت `test:review`.
+
+### نحوه‌ی تست
+`bun run db:deploy && bun run db:seed` روی Postgres → ورود مشاور (`review@sharestan.ir`) یا کارفرما (`approver@khatam.ac.ir`) رمز `civilic` → پروژه → تب صورت‌وضعیت/تعدیل/متره → «رسیدگی ردیفی». `bun run test:review` برای منطق خالص.
+
+### باقی‌مانده / محدودیت‌ها
+- اقدام گروهی تایید برای متره در نسخه‌ی بعد (تک‌ردیفی فعال است).
+- Drawer تاریخچه‌ی ردیفی (LineItemChangeLog ثبت می‌شود؛ نمایش drawer اختصاصی باقی است).
+- parity کامل فرمول ریالی با تکسا هنوز کامل نیست؛ مقادیر import‌شده source of truth و با `NEEDS_TEXSA_PARITY_REVIEW` علامت‌گذاری می‌شوند.
+- نوار طرفین در هدر پروژه هنوز نام‌های دموی خاتم را hard-code دارد (نیازمند اتصال به `ProjectParty`).

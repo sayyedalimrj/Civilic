@@ -228,6 +228,30 @@ export async function runDemoSeed(db: PrismaClient, opts: { reset?: boolean } = 
   const channelCount = await db.projectChannel.count({ where: { projectId: project.id } });
   if (projectCreated || channelCount === 0) {
     await db.chapter.create({ data: { projectId: project.id, chapterNo: 6, title: "بتن درجا", amount: 129528960, percent: 40 } }).catch(() => {});
+    // اقلام صورت‌وضعیت (برای نمونه‌های رسیدگی) + ردیف‌های ریزمتره
+    const payItems: Record<number, { id: string }[]> = {};
+    for (const p of payStates) {
+      const pay = payments[p.period - 1];
+      const a = await db.paymentItem.create({ data: { paymentId: pay.id, code: "060102", description: "بتن‌ریزی پی و شالوده", unit: "مترمکعب", totalQuantity: 112.95, executedQuantity: 112.95 * (p.period / 5), unitPrice: 1120000, executedAmount: p.amount * 0.8 } });
+      const b = await db.paymentItem.create({ data: { paymentId: pay.id, code: "060805", description: "آرماتوربندی میلگرد", unit: "کیلوگرم", totalQuantity: 10.96, executedQuantity: 10.96 * (p.period / 5), unitPrice: 276000, executedAmount: p.amount * 0.2 } });
+      payItems[p.period] = [a, b];
+    }
+    const detailRows = await Promise.all([
+      db.detailBoq.create({ data: { projectId: project.id, code: "060102", description: "بتن‌ریزی پی و شالوده", unit: "مترمکعب", quantity: 112.95, recordSource: "TEXSA" } }),
+      db.detailBoq.create({ data: { projectId: project.id, code: "060805", description: "آرماتوربندی میلگرد", unit: "کیلوگرم", quantity: 10.96, recordSource: "TEXSA" } }),
+    ]);
+    // نمونه‌های لایه‌ی رسیدگی (redline)
+    const C = conReviewer.name, E = empApprover.name;
+    // دوره ۴: مشاور ردیف اول را بدون تغییر تایید، ردیف دوم را اصلاح کرد
+    await db.paymentCertificateItemReview.create({ data: { paymentCertificateItemId: payItems[4][0].id, partyType: "CONSULTANT", reviewStage: "CONSULTANT_REVIEW", decision: "APPROVED_AS_IS", colorKey: "consultant", source: "REVIEW", reviewerName: C } });
+    await db.paymentCertificateItemReview.create({ data: { paymentCertificateItemId: payItems[4][1].id, partyType: "CONSULTANT", reviewStage: "CONSULTANT_REVIEW", decision: "REVISED", amount: payStates[3].amount * 0.18, comment: "اصلاح وزن آرماتور مطابق صورت‌جلسه", colorKey: "consultant", source: "REVIEW", reviewerName: C } });
+    // دوره ۲: مشاور تایید، کارفرما ردیف اول را اصلاح نهایی کرد
+    await db.paymentCertificateItemReview.create({ data: { paymentCertificateItemId: payItems[2][0].id, partyType: "CONSULTANT", reviewStage: "CONSULTANT_REVIEW", decision: "APPROVED_AS_IS", colorKey: "consultant", source: "REVIEW", reviewerName: C } });
+    await db.paymentCertificateItemReview.create({ data: { paymentCertificateItemId: payItems[2][0].id, partyType: "EMPLOYER", reviewStage: "EMPLOYER_REVIEW", decision: "REVISED", amount: payStates[1].amount * 0.72, comment: "کاهش جزئی مطابق رسیدگی کارفرما", colorKey: "employer", source: "REVIEW", reviewerName: E } });
+    // دوره ۳ (برگشتی): مشاور احجام تاییدنشده را کسر کرد
+    await db.paymentCertificateItemReview.create({ data: { paymentCertificateItemId: payItems[3][0].id, partyType: "CONSULTANT", reviewStage: "CONSULTANT_REVIEW", decision: "REVISED", amount: payStates[2].amount * 0.6, comment: "کسر احجام تاییدنشده فصل ۶", colorKey: "consultant", source: "REVIEW", reviewerName: C } });
+    // متره: مشاور حجم ردیف اول را اصلاح کرد
+    await db.measurementItemReview.create({ data: { measurementItemId: detailRows[0].id, partyType: "CONSULTANT", decision: "REVISED", quantity: 108.5, comment: "اصلاح حجم بتن مطابق برداشت", colorKey: "consultant", source: "REVIEW", reviewerName: C } });
     const defaultChannels = [
       { title: "عمومی پروژه", type: "GENERAL", visibility: "ALL_PARTIES" },
       { title: "دفتر فنی", type: "TECHNICAL", visibility: "ALL_PARTIES" },
@@ -258,7 +282,13 @@ export async function runDemoSeed(db: PrismaClient, opts: { reset?: boolean } = 
     const doc = await db.document.create({ data: { projectId: project.id, title: "صورت‌جلسه احجام فصل ۶", type: "MINUTES", entityType: "PAYMENT", entityId: payments[2].id } });
     const ver = await db.documentVersion.create({ data: { documentId: doc.id, versionNo: 1, fileUrl: "/uploads/demo/minutes.pdf", fileName: "minutes.pdf", fileSizeBytes: 102400, uploadedById: conResident.id, uploadedByName: conResident.name } });
     await db.document.update({ where: { id: doc.id }, data: { currentVersionId: ver.id } });
-    await db.adjustmentReportRow.create({ data: { tenantId: tenant.id, projectId: project.id, paymentId: payments[1].id, periodLabel: "سه‌ماهه دوم ۱۴۰۳", chapterNo: 6, workPeriodAmount: 60822769244, baseIndex: 6970.7, currentIndex: 8120.4, adjustmentFactor: 1.165, adjustmentAmount: 60822769244 * 0.165, adjustmentType: "TEMPORARY", recordSource: "TEXSA" } });
+    const adjRow = await db.adjustmentReportRow.create({ data: { tenantId: tenant.id, projectId: project.id, paymentId: payments[1].id, periodLabel: "سه‌ماهه دوم ۱۴۰۳", chapterNo: 6, workPeriodAmount: 60822769244, baseIndex: 6970.7, currentIndex: 8120.4, adjustmentFactor: 1.165, adjustmentAmount: 60822769244 * 0.165, adjustmentType: "TEMPORARY", recordSource: "TEXSA" } });
+    // تعدیل: مشاور اصلاح، کارفرما تایید نهایی
+    await db.adjustmentItemReview.create({ data: { adjustmentItemId: adjRow.id, partyType: "CONSULTANT", reviewStage: "CONSULTANT_REVIEW", decision: "REVISED", adjustmentAmount: 60822769244 * 0.15, comment: "اصلاح شاخص دوره", colorKey: "consultant", source: "REVIEW", reviewerName: C } });
+    await db.adjustmentItemReview.create({ data: { adjustmentItemId: adjRow.id, partyType: "EMPLOYER", reviewStage: "EMPLOYER_REVIEW", decision: "APPROVED_AS_IS", adjustmentAmount: 60822769244 * 0.15, colorKey: "employer", source: "REVIEW", reviewerName: E } });
+    // نمونه‌ی وضعیت محاسبه‌ی stale (تعدیل پس از تغییر صورت‌وضعیت نیازمند بروزرسانی)
+    await db.calculationNode.upsert({ where: { projectId_stage: { projectId: project.id, stage: "ADJUSTMENT" } }, create: { projectId: project.id, entityType: "ADJUSTMENT", entityId: `${project.id}:ADJUSTMENT`, stage: "ADJUSTMENT", status: "STALE", parity: "NEEDS_TEXSA_PARITY_REVIEW", dependsOnJson: JSON.stringify(["PAYMENT_CERTIFICATE"]), staleReason: "مبلغ صورت‌وضعیت پس از رسیدگی تغییر کرد" }, update: {} });
+    await db.calculationNode.upsert({ where: { projectId_stage: { projectId: project.id, stage: "MEASUREMENT_SUMMARY" } }, create: { projectId: project.id, entityType: "MEASUREMENT_SUMMARY", entityId: `${project.id}:MEASUREMENT_SUMMARY`, stage: "MEASUREMENT_SUMMARY", status: "STALE", parity: "NEEDS_TEXSA_PARITY_REVIEW", dependsOnJson: JSON.stringify(["MEASUREMENT_DETAIL"]), staleReason: "اصلاح ریزمتره توسط مشاور" }, update: {} });
     await db.alert.create({ data: { tenantId: tenant.id, projectId: project.id, type: "WORKFLOW", severity: "WARNING", title: "صورت‌وضعیت برگشتی", message: "صورت‌وضعیت شماره ۳ توسط مشاور برگشت داده شده است.", relatedType: "PAYMENT", relatedId: payments[2].id } });
   }
 

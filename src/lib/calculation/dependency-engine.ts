@@ -127,9 +127,15 @@ export async function explainStaleReason(projectId: string, stage: CalcStage): P
 
 /** خلاصه‌متره: تجمیع DetailBoq بر اساس کد → SummaryBoq.totalQuantity */
 export async function recalculateMeasurementSummary(projectId: string, by?: string) {
-  const details = await db.detailBoq.findMany({ where: { projectId } });
+  const details = await db.detailBoq.findMany({ where: { projectId }, include: { reviews: { where: { isEffective: true } } } });
   const byCode = new Map<string, number>();
-  for (const d of details) byCode.set(d.code, (byCode.get(d.code) ?? 0) + d.quantity);
+  for (const d of details) {
+    // مقدار مؤثر: آخرین لایه‌ی رسیدگی با بالاترین طرف، وگرنه مقدار پیمانکار
+    const employer = d.reviews.find((r) => r.partyType === "EMPLOYER" && r.quantity != null);
+    const consultant = d.reviews.find((r) => r.partyType === "CONSULTANT" && r.quantity != null);
+    const qty = employer?.quantity ?? consultant?.quantity ?? d.quantity;
+    byCode.set(d.code, (byCode.get(d.code) ?? 0) + qty);
+  }
   for (const [code, qty] of byCode) {
     const existing = await db.summaryBoq.findFirst({ where: { projectId, code } });
     if (existing) await db.summaryBoq.update({ where: { id: existing.id }, data: { totalQuantity: qty } });

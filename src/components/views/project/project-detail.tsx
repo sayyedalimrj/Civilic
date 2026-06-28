@@ -19,6 +19,9 @@ import { FinancialSheetView } from "./financial-sheet-view";
 import { PaymentsView } from "./payments-view";
 import { AdjustmentView } from "./adjustment-view";
 import { ReportsView } from "./reports-view";
+import { MeasurementReviewView } from "@/components/review/measurement-review-view";
+import { AdjustmentReviewView } from "@/components/review/adjustment-review-view";
+import { TexsaCompatReport } from "@/components/review/texsa-compat-report";
 
 const TABS: { id: ProjectTab; label: string; icon: typeof FileText }[] = [
   { id: "overview", label: "پیشخوان", icon: LayoutDashboard },
@@ -125,21 +128,27 @@ export function ProjectDetail() {
           <MeteringStep />
         )}
         {selectedProjectTab === "payment" && <PaymentsView />}
-        {selectedProjectTab === "adjustment" && <AdjustmentView />}
+        {selectedProjectTab === "adjustment" && <AdjustmentStep />}
         {selectedProjectTab === "discussion" && (
           <div className="p-4 text-center text-sm text-muted-foreground">
             <MessageSquare className="size-8 mx-auto mb-2 text-muted-foreground/40" />
             گفتگوی پروژه — کانال‌های عمومی، فنی، صورت‌وضعیت و کارگاه
           </div>
         )}
-        {selectedProjectTab === "export" && <ReportsView />}
+        {selectedProjectTab === "export" && (
+          <div className="space-y-4 p-4">
+            {selectedProjectId && <TexsaCompatReport projectId={selectedProjectId} />}
+            <ReportsView />
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
 function MeteringStep() {
-  const [showSummary, setShowSummary] = useState(false);
+  const projectId = useAppStore((s) => s.selectedProjectId);
+  const [mode, setMode] = useState<"detail" | "summary" | "review">("detail");
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between p-4">
@@ -147,11 +156,27 @@ function MeteringStep() {
           <h2 className="text-base font-bold">متره و صورتجلسات</h2>
           <p className="text-[11px] text-muted-foreground mt-0.5">ثبت احجام و مقادیر — خلاصه متره خودکار</p>
         </div>
-        <Button size="sm" variant="outline" onClick={() => setShowSummary(!showSummary)}>
-          {showSummary ? "ریزمتره" : "خلاصه متره"}
-        </Button>
+        <div className="flex rounded-lg border p-0.5">
+          <Button size="sm" variant={mode === "detail" ? "default" : "ghost"} className="h-8 text-xs" onClick={() => setMode("detail")}>ریزمتره</Button>
+          <Button size="sm" variant={mode === "summary" ? "default" : "ghost"} className="h-8 text-xs" onClick={() => setMode("summary")}>خلاصه متره</Button>
+          <Button size="sm" variant={mode === "review" ? "default" : "ghost"} className="h-8 text-xs" onClick={() => setMode("review")}>رسیدگی ردیفی</Button>
+        </div>
       </div>
-      {showSummary ? <SummaryBoqView /> : <DetailBoqView />}
+      {mode === "summary" ? <SummaryBoqView /> : mode === "review" ? (projectId ? <MeasurementReviewView projectId={projectId} /> : null) : <DetailBoqView />}
+    </div>
+  );
+}
+
+function AdjustmentStep() {
+  const projectId = useAppStore((s) => s.selectedProjectId);
+  const [reviewMode, setReviewMode] = useState(false);
+  return (
+    <div>
+      <div className="flex items-center justify-end gap-1 border-b bg-card px-4 py-2">
+        <Button size="sm" variant={!reviewMode ? "default" : "ghost"} className="h-8 text-xs" onClick={() => setReviewMode(false)}>محاسبه تعدیل</Button>
+        <Button size="sm" variant={reviewMode ? "default" : "ghost"} className="h-8 text-xs" onClick={() => setReviewMode(true)}>رسیدگی ردیفی</Button>
+      </div>
+      {reviewMode && projectId ? <AdjustmentReviewView projectId={projectId} /> : <AdjustmentView />}
     </div>
   );
 }
