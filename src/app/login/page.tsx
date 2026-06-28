@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { signIn } from "next-auth/react";
+import { signIn, getSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,12 +31,19 @@ export default function LoginPage() {
       password,
       redirect: false,
     });
-    setLoading(false);
     if (res?.error) {
+      setLoading(false);
       setError("ایمیل یا رمز عبور نادرست است.");
       return;
     }
-    router.push("/");
+    // مقصد امن: callbackUrl معتبر، وگرنه بر اساس نقش
+    const cb = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("callbackUrl") : null;
+    const safeCb = cb && cb.startsWith("/") && !cb.startsWith("//") ? cb : null;
+    const session = await getSession();
+    const isAdmin = Boolean((session?.user as Record<string, unknown> | undefined)?.isPlatformAdmin);
+    const target = safeCb ?? (isAdmin ? "/admin" : "/");
+    setLoading(false);
+    router.push(target);
     router.refresh();
   }
 

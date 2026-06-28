@@ -1315,3 +1315,37 @@ Agent: Kiro (Claude Opus 4.8). راستی‌آزمایی: `tsc --noEmit` ۰ خط
 - پولیش صفحه‌ی جزئیات پروژه (هدر/تب‌ها) و تبدیل جداول مدیریت به `ResponsiveTable` (کارت موبایل) — جداول فعلی روی دسکتاپ تمیزند اما موبایل scroll افقی دارند.
 - اتصال DirectionProvider صریح Radix (در حال حاضر `dir="rtl"` روی html کافی است؛ dropdown/sheet درست عمل می‌کنند).
 - صفحات placeholder مدیریت (سازمان/نقش/مصرف/لاگ/تنظیمات) به پیاده‌سازی کامل نیاز دارند.
+
+
+---
+
+## Vercel Login / Demo Seed Bootstrap Fix
+Agent: Kiro (Claude Opus 4.8). راستی‌آزمایی: `db:generate` ✅، `typecheck` ۰ خطا، `lint` بدون خطا، `build` موفق (۳۹ صفحه شامل `/api/bootstrap/demo-seed` و `/api/health`).
+
+### مشکل
+ورود روی Vercel ناموفق بود چون دیتابیس Vercel **migrate/seed نشده** بود؛ پس کاربری برای credentials auth وجود نداشت.
+
+### تغییرات
+- **seed قابل‌استفاده‌ی مجدد و idempotent**: `src/lib/seed/demo-seed.ts` با `runDemoSeed(db, { reset })`.
+  - upsert بر کلیدهای یکتا (email/slug/key/composite uniques) و findFirst برای org/project/party.
+  - حذف داده **فقط** در حالت `reset` (CLI). محتوای غنی دمو فقط وقتی پروژه تازه ساخته شده یا کانالی ندارد ساخته می‌شود (بدون تکرار).
+  - خروجی summary (بدون hash رمز).
+- `prisma/seed.ts` بازنویسی شد و فقط `runDemoSeed(db, { reset: true })` را صدا می‌زند.
+- **endpoint بوت‌استرپ**: `POST /api/bootstrap/demo-seed` — فقط با `ENABLE_DEMO_BOOTSTRAP=true` و `BOOTSTRAP_SECRET` صحیح (مقایسه‌ی timing-safe، هدر `x-bootstrap-secret` یا body). پیش‌فرض idempotent؛ `reset` فقط خارج از production. خروجی: کاربران/مستاجر/پروژه (بدون hash).
+- **endpoint سلامت**: `GET /api/health` — اتصال DB، شمار user/tenant/project، وجود `owner@civilic.ir` و `preparer@sivantadbir.ir`. بدون افشای راز؛ در خطای DB کد ۵۰۳.
+- **تشخیص خطای ورود** (`auth-options.ts`): لاگ سمت‌سرور برای «user not found / inactive / missing password hash / invalid password / database connection error» (پیام کاربر همچنان عمومی فارسی). `isPlatformAdmin` در JWT/session منتشر شد.
+- **اصلاح redirect ورود** (`login/page.tsx`): خواندن `callbackUrl` از query، هدایت به callbackUrl امن (شروع با `/`، نه `//`)؛ در نبود آن، مدیر سامانه → `/admin` و کاربر عادی → `/`.
+- **مستندات و env**: `.env.example` با `DATABASE_URL`/`NEXTAUTH_SECRET`/`NEXTAUTH_URL` و متغیرهای bootstrap؛ `docs/vercel-deploy-checklist.md` شامل دو روش آماده‌سازی DB، فراخوانی bootstrap با curl، بررسی `/api/health`، کاربران ورود، و **مشکل Vercel Deployment Protection** (غیرفعال‌سازی Vercel Authentication برای Preview / Shareable Link / لاگین با حساب درست).
+
+### نحوه‌ی استفاده روی Vercel
+1. ست‌کردن `DATABASE_URL`/`NEXTAUTH_SECRET`/`NEXTAUTH_URL`.
+2. `bun run db:deploy && bun run db:seed` — یا — ست‌کردن `ENABLE_DEMO_BOOTSTRAP=true`+`BOOTSTRAP_SECRET` و `POST /api/bootstrap/demo-seed`.
+3. بررسی `GET /api/health` (باید `database: ok`).
+4. ورود: `owner@civilic.ir/civilic` → `/admin`؛ `preparer@sivantadbir.ir/civilic` → `/`.
+
+### پذیرش
+- ✅ `/api/health` اتصال DB را تأیید می‌کند.
+- ✅ `/api/bootstrap/demo-seed` با secret کاربران دمو را می‌سازد (idempotent).
+- ✅ ورود مدیر سامانه → `/admin`؛ کاربر دمو → اپ.
+- ✅ ورود به callbackUrl احترام گذاشته می‌شود.
+- ✅ مشکل Preview Protection مستند شد.
