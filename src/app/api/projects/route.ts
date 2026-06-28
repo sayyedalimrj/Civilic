@@ -40,9 +40,39 @@ export async function GET(req: NextRequest) {
   const projects = await db.project.findMany({
     where,
     orderBy: { createdAt: "desc" },
-    include: { _count: { select: { detailBoqs: true, financialSheet: true, payments: true } } },
+    include: {
+      _count: { select: { detailBoqs: true, financialSheet: true, payments: true } },
+      tenant: { select: { name: true } },
+      parties: { include: { organization: { select: { name: true } } } },
+      members: { where: { userId: user.id }, select: { role: true, projectParty: { select: { partyType: true } } } },
+      payments: { select: { status: true } },
+    },
   });
-  return NextResponse.json({ projects });
+
+  const OPEN = new Set(["DRAFT", "SUBMITTED_BY_CONTRACTOR", "UNDER_CONSULTANT_REVIEW", "RETURNED_BY_CONSULTANT", "RESUBMITTED_BY_CONTRACTOR", "APPROVED_BY_CONSULTANT", "SUBMITTED_TO_EMPLOYER", "UNDER_EMPLOYER_REVIEW", "RETURNED_BY_EMPLOYER", "RESUBMITTED_TO_EMPLOYER", "SUBMITTED", "CONSULTANT_APPROVED"]);
+
+  const shaped = projects.map((p) => ({
+    id: p.id,
+    name: p.name,
+    code: p.code,
+    status: p.status,
+    year: p.year,
+    location: p.location,
+    contractAmount: p.contractAmount,
+    cachedExecuted: p.cachedExecuted,
+    cachedTotal: p.cachedTotal,
+    createdAt: p.createdAt,
+    updatedAt: p.updatedAt,
+    tenant: p.tenant?.name ?? null,
+    parties: p.parties.map((pp) => ({ partyType: pp.partyType, name: pp.organization?.name ?? pp.displayTitle })),
+    myRole: p.members[0]?.role ?? null,
+    myPartyType: p.members[0]?.projectParty?.partyType ?? null,
+    openWorkflows: p.payments.filter((pay) => OPEN.has(pay.status)).length,
+    paymentCount: p.payments.length,
+    detailCount: p._count.detailBoqs,
+  }));
+
+  return NextResponse.json({ projects: shaped });
 }
 
 const partySchema = z.object({

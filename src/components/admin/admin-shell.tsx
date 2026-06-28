@@ -5,16 +5,22 @@ import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import {
   LayoutDashboard, Building2, Users, FolderKanban, CreditCard, Receipt, LogOut, ShieldCheck,
+  Network, KeyRound, Gauge, ScrollText, Settings2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
-  { href: "/admin", label: "داشبورد", icon: LayoutDashboard, exact: true },
-  { href: "/admin/tenants", label: "مستاجرها", icon: Building2 },
+  { href: "/admin", label: "پیشخوان مدیریت", icon: LayoutDashboard, exact: true },
+  { href: "/admin/tenants", label: "مشتری‌ها", icon: Building2 },
+  { href: "/admin/organizations", label: "سازمان‌ها", icon: Network },
   { href: "/admin/users", label: "کاربران", icon: Users },
   { href: "/admin/projects", label: "پروژه‌ها", icon: FolderKanban },
+  { href: "/admin/roles", label: "نقش‌ها و دسترسی‌ها", icon: KeyRound },
   { href: "/admin/plans", label: "پلن‌ها", icon: CreditCard },
   { href: "/admin/invoices", label: "صورتحساب‌ها", icon: Receipt },
+  { href: "/admin/usage", label: "مصرف و محدودیت‌ها", icon: Gauge },
+  { href: "/admin/logs", label: "لاگ و پشتیبانی", icon: ScrollText },
+  { href: "/admin/settings", label: "تنظیمات سامانه", icon: Settings2 },
 ];
 
 export function AdminShell({ children, userName }: { children: React.ReactNode; userName: string }) {
@@ -32,7 +38,7 @@ export function AdminShell({ children, userName }: { children: React.ReactNode; 
             <div className="text-[11px] text-muted-foreground">Civilic Platform</div>
           </div>
         </div>
-        <nav className="flex-1 space-y-1 p-3">
+        <nav className="flex-1 space-y-1 overflow-y-auto p-3">
           {NAV.map((item) => {
             const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
             const Icon = item.icon;

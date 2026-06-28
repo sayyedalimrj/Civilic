@@ -36,11 +36,13 @@ interface AppState {
   selectedProjectId: string | null;
   selectedProjectTab: ProjectTab;
   sidebarCollapsed: boolean;
+  mobileNavOpen: boolean;
   currentUser: CurrentUserRole;
   setView: (v: ViewMode) => void;
   selectProject: (id: string | null, tab?: ProjectTab) => void;
   setProjectTab: (t: ProjectTab) => void;
   toggleSidebar: () => void;
+  setMobileNav: (open: boolean) => void;
   setCurrentUser: (u: CurrentUserRole) => void;
 }
 
@@ -48,7 +50,9 @@ export const useAppStore = create<AppState>((set) => ({
   view: "workbench",
   selectedProjectId: null,
   selectedProjectTab: "overview",
-  sidebarCollapsed: true,
+  // دسکتاپ‌محور: سایدبار به‌صورت پیش‌فرض باز است
+  sidebarCollapsed: false,
+  mobileNavOpen: false,
   // کاربر فعلی: مشاور/ناظر مقیم (دمو)
   currentUser: {
     userId: "user-admin",
@@ -58,10 +62,11 @@ export const useAppStore = create<AppState>((set) => ({
     canSign: true,
     canApprove: true,
   },
-  setView: (v) => set({ view: v, selectedProjectId: v === "projects" ? null : undefined as any }),
+  setView: (v) => set({ view: v, selectedProjectId: v === "projects" ? null : (undefined as never), mobileNavOpen: false }),
   selectProject: (id, tab = "overview") =>
-    set({ selectedProjectId: id, view: "projects", selectedProjectTab: tab, sidebarCollapsed: true }),
+    set({ selectedProjectId: id, view: "projects", selectedProjectTab: tab, mobileNavOpen: false }),
   setProjectTab: (t) => set({ selectedProjectTab: t }),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+  setMobileNav: (open) => set({ mobileNavOpen: open }),
   setCurrentUser: (u) => set({ currentUser: u }),
 }));

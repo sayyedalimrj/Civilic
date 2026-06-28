@@ -1268,3 +1268,50 @@ Agent: Kiro (Claude Opus 4.8). راستی‌آزمایی: `tsc --noEmit` ۰ خط
 - tenant-scoping بقیه‌ی routeهای قدیمی که هنوز `"tenant-demo"` را hard-code می‌کنند (dashboard/base-data/...) — باید مثل `/api/projects` به session منتقل شوند.
 - impersonation/SupportAccessGrant UI، usage metering خودکار، و اتصال feature flags.
 - اجرای واقعی `db:deploy`/`db:seed` (sandbox فاقد PostgreSQL است).
+
+
+---
+
+## UI/UX Desktop-First Responsive Polish Phase
+Agent: Kiro (Claude Opus 4.8). راستی‌آزمایی: `tsc --noEmit` ۰ خطا، `eslint .` بدون خطا، `prisma generate` موفق، `next build` موفق (۳۹ صفحه).
+
+### هدف
+ارتقای Civilic از حس «دمو» به یک SaaS فارسی/RTL حرفه‌ای، **دسکتاپ‌محور** و responsive. بدون افزودن بک‌اند غیرمرتبط (فقط داده‌ی لازم برای UI).
+
+### تغییرات اصلی
+**ممیزی** — `docs/ui-ux-audit.md` (مشکل/چرا/اصلاح برای هر ناحیه).
+
+**سیستم طراحی**
+- `src/lib/design/tokens.ts`: tone‌های وضعیت، نگاشت فارسی وضعیت صورت‌وضعیت (۱۳ حالت) + عمومی، برچسب طرف/نقش (client-safe).
+- **recolor** کل تم در `globals.css` از کهربایی → **ایندیگو/آبی حرفه‌ای** (light + dark)، حذف گرادیان‌های کهربایی.
+- کامپوننت‌های مشترک: `MetricCard`, `EmptyState`, `StatusBadge`, `ResponsiveTable` (جدول دسکتاپ + کارت موبایل)، `PageHeader`, `SectionCard`.
+
+**سایدبار و هدر و ناوبری موبایل**
+- `app-sidebar.tsx` بازنویسی شد: دسکتاپ‌محور، **پیش‌فرض باز** (store: `sidebarCollapsed=false`)، collapsible با دکمه‌ی شناور، برند Civilic بالا، نقش/خروج (session) پایین، رنگ active با توکن primary، `hidden md:flex`.
+- **`MobileNav`** جدید: Sheet از سمت راست (RTL) برای موبایل؛ store: `mobileNavOpen`/`setMobileNav`.
+- `app-header.tsx`: دکمه‌ی همبرگر (موبایل → drawer، دسکتاپ → toggle)، حذف گرادیان کهربایی، برند موبایل Civilic.
+- `page.tsx`: افزودن `<MobileNav />`.
+
+**کارتابل من** — `workbench-view.tsx` کاملاً بازطراحی شد:
+- API جدید `src/app/api/workbench/route.ts` (session-scoped، نقش‌محور): اقدامات منتظر، در حال بررسی، پیام‌های خوانده‌نشده، مکاتبات، پروژه‌های اخیر، هشدارها — **داده‌ی واقعی seed، بدون داده‌ی fake**.
+- چیدمان grid دسکتاپ (۳ ستون): متریک‌ها + اقدامات منتظر + بررسی + ستون کناری پیام/مکاتبه + ردیف پایین پروژه‌ها/هشدارها. CTA اصلی نقش‌محور (پیمانکار/مشاور/کارفرما/مدیر سامانه). حذف کامل آیتم‌های جعلی قبلی (متروی تهران و …).
+
+**داشبورد مدیریت** — `admin/page.tsx` بازطراحی شد: ردیف متریک فشرده، مشتری‌های اخیر، صورتحساب‌های اخیر، اقدامات سریع — با کامپوننت‌های مشترک.
+- سایدبار مدیریت (`admin-shell.tsx`) به ۱۱ آیتم کامل ارتقا یافت (پیشخوان/مشتری/سازمان/کاربران/پروژه/نقش/پلن/صورتحساب/مصرف/لاگ/تنظیمات).
+- صفحات placeholder: `admin/{organizations,roles,usage,logs,settings}` با EmptyState «در حال توسعه» تا لینک‌ها سالم بمانند.
+
+**فهرست پروژه‌ها** — `projects-view.tsx` بازنویسی شد: حذف type-gradient/رینگ دایره‌ای جعلی؛ کارت‌های حرفه‌ای با طرفین (کارفرما/مشاور/پیمانکار)، نقش من، گردش‌کار باز، مبلغ پیمان، StatusBadge، دکمه‌ی «ورود به پروژه»؛ نمای grid/list، جستجو و فیلتر وضعیت.
+- `/api/projects` GET توسعه یافت: شامل parties + نقش کاربر + شمار گردش‌کار باز (همچنان فیلدهای قبلی برای sidebar/command-palette حفظ شد).
+
+### Responsive
+- دسکتاپ: سایدبار دائمی راست + باز پیش‌فرض، grid چندستونه، `max-w-[1600px]`.
+- تبلت: سایدبار جمع‌شدنی، grid ۲ستونه.
+- موبایل: سایدبار → Sheet راست، کارت‌ها عمودی، ResponsiveTable → کارت، بدون overflow افقی کنترل‌نشده.
+
+### تست
+- ✅ `tsc --noEmit` = ۰ خطا · ✅ `eslint .` = بدون خطا · ✅ `prisma generate` · ✅ `next build` (۳۹ صفحه).
+
+### کار باقی‌مانده (شفاف)
+- پولیش صفحه‌ی جزئیات پروژه (هدر/تب‌ها) و تبدیل جداول مدیریت به `ResponsiveTable` (کارت موبایل) — جداول فعلی روی دسکتاپ تمیزند اما موبایل scroll افقی دارند.
+- اتصال DirectionProvider صریح Radix (در حال حاضر `dir="rtl"` روی html کافی است؛ dropdown/sheet درست عمل می‌کنند).
+- صفحات placeholder مدیریت (سازمان/نقش/مصرف/لاگ/تنظیمات) به پیاده‌سازی کامل نیاز دارند.

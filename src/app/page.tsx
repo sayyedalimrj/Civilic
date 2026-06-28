@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { AppHeader } from "@/components/app-header";
-import { AppSidebar } from "@/components/app-sidebar";
+import { AppSidebar, MobileNav } from "@/components/app-sidebar";
 import { WorkbenchView } from "@/components/views/workbench-view";
 import { ProjectsView } from "@/components/views/projects-view";
 import { ProjectDetail } from "@/components/views/project/project-detail";
@@ -24,6 +24,7 @@ export default function Home() {
       <AppHeader />
       <div className="flex flex-1 overflow-hidden">
         <AppSidebar />
+        <MobileNav />
         <main className="flex-1 overflow-y-auto">
           {view === "workbench" && <WorkbenchView />}
           {view === "projects" && !showProjectDetail && <ProjectsView />}

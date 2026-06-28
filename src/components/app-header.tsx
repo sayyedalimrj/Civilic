@@ -7,8 +7,7 @@ import {
   Settings,
   Moon,
   Sun,
-  ChevronLeft,
-  ChevronRight,
+  Menu,
   Search,
   LayoutDashboard,
   FolderTree,
@@ -202,7 +201,7 @@ export function AppHeader() {
   const userName = (session?.user?.name as string) || "کاربر مهمان";
   const {
     toggleSidebar,
-    sidebarCollapsed,
+    setMobileNav,
     view,
     selectedProjectId,
     selectedProjectTab,
@@ -320,28 +319,26 @@ export function AppHeader() {
   return (
     <header className="sticky top-0 z-40 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60 shadow-sm">
       <div className="flex h-16 items-center gap-3 px-4">
-        {/* Sidebar toggle — RTL: وقتی نوار باز است، فلش به سمت راست (بستن)؛ وقتی بسته است، فلش به سمت چپ (باز کردن) */}
+        {/* Mobile: hamburger → drawer | Desktop: toggle sidebar */}
         <Button
           variant="ghost"
           size="icon"
-          onClick={toggleSidebar}
+          onClick={() => {
+            if (typeof window !== "undefined" && window.innerWidth < 768) setMobileNav(true);
+            else toggleSidebar();
+          }}
           className="shrink-0"
-          aria-label="باز/بستن نوار کناری"
+          aria-label="منوی ناوبری"
         >
-          {sidebarCollapsed ? <ChevronLeft /> : <ChevronRight />}
+          <Menu className="size-5" />
         </Button>
 
-        {/* Logo and org name */}
-        <div className="flex items-center gap-2.5">
-          <div className="flex size-10 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-orange-700 text-primary-foreground shadow-md ring-1 ring-amber-400/20">
-            <Building2 className="size-5" />
+        {/* Brand (mobile only — desktop brand lives in sidebar) */}
+        <div className="flex items-center gap-2 md:hidden">
+          <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <Building2 className="size-4" />
           </div>
-          <div className="hidden sm:block">
-            <div className="text-sm font-bold leading-tight">Civilic</div>
-            <div className="text-[11px] text-muted-foreground leading-tight">
-              سامانه مدیریت پروژه عمرانی
-            </div>
-          </div>
+          <span className="text-sm font-extrabold">Civilic</span>
         </div>
 
         {/* Dynamic Breadcrumb */}
