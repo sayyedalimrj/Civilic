@@ -56,6 +56,8 @@ import {
 } from "@/components/ui/table";
 import { CommentThread } from "@/components/comments/comment-thread";
 import { PaymentReviewView } from "@/components/review/payment-review-view";
+import { AttachmentsPanel } from "@/components/uploads/attachments-panel";
+import { useProjectAccess } from "@/hooks/use-project-access";
 
 // ─── Types ───────────────────────────────────────────────────────────
 interface PaymentItem {
@@ -177,7 +179,8 @@ export function PaymentsView() {
   });
 
   const [selectedPeriod, setSelectedPeriod] = React.useState<number | null>(null);
-  const [reviewMode, setReviewMode] = React.useState(false);
+  const [detailMode, setDetailMode] = React.useState<"exec" | "review" | "files">("exec");
+  const { can } = useProjectAccess(projectId);
 
   const payments = data?.project?.payments ?? [];
   const selectedPayment = payments.find((p) => p.periodNo === selectedPeriod) || null;
@@ -386,16 +389,29 @@ export function PaymentsView() {
           {selectedPayment ? (
             <>
               <div className="flex items-center gap-1 border-b bg-card px-4 py-2">
-                <Button size="sm" variant={!reviewMode ? "default" : "ghost"} className="h-8 text-xs" onClick={() => setReviewMode(false)}>
+                <Button size="sm" variant={detailMode === "exec" ? "default" : "ghost"} className="h-8 text-xs" onClick={() => setDetailMode("exec")}>
                   ثبت اجرا
                 </Button>
-                <Button size="sm" variant={reviewMode ? "default" : "ghost"} className="h-8 text-xs" onClick={() => setReviewMode(true)}>
+                <Button size="sm" variant={detailMode === "review" ? "default" : "ghost"} className="h-8 text-xs" onClick={() => setDetailMode("review")}>
                   رسیدگی ردیفی (Redline)
+                </Button>
+                <Button size="sm" variant={detailMode === "files" ? "default" : "ghost"} className="h-8 text-xs" onClick={() => setDetailMode("files")}>
+                  پیوست‌ها
                 </Button>
               </div>
               <div className="flex-1 overflow-y-auto">
-                {reviewMode ? (
+                {detailMode === "review" ? (
                   <PaymentReviewView projectId={(projectId as string) || ""} periodNo={selectedPayment.periodNo} />
+                ) : detailMode === "files" ? (
+                  <div className="p-4">
+                    <AttachmentsPanel
+                      projectId={(projectId as string) || ""}
+                      ownerType="PAYMENT"
+                      ownerId={selectedPayment.id}
+                      canUpload={can("document.create")}
+                      title="پیوست‌های صورت‌وضعیت"
+                    />
+                  </div>
                 ) : (
                   <PaymentDetail payment={selectedPayment} />
                 )}

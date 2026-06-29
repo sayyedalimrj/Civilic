@@ -267,8 +267,46 @@ model Project {
   channels        ProjectChannel[]
   letters         Letter[]
   workflowInstances WorkflowInstance[]
+  attachments     Attachment[]
 
   @@index([tenantId])
+}
+
+// ═══════════════════════════════════════════════════════════
+//  آپلود واقعی فایل‌ها (Real Secure Uploads)
+//  فایل‌ها روی دیسک سرور و زیر دایرکتوری‌های پیکربندی‌شده ذخیره می‌شوند.
+//  متادیتا اینجا و بایت‌ها روی دیسک. دانلود فقط با بررسی دسترسی.
+// ═══════════════════════════════════════════════════════════
+model Attachment {
+  id            String    @id @default(cuid())
+  tenantId      String
+  projectId     String?   // null = فایل سطح tenant (مثلاً ایمپورت تکسا قبل از ساخت پروژه)
+  // موجودیت مالک: PAYMENT | PAYMENT_ITEM | ADJUSTMENT | MEASUREMENT | CORRESPONDENCE
+  //              | DOCUMENT | CHAT | TEXSA_IMPORT | PROJECT
+  ownerType     String
+  ownerId       String
+  // نام‌ها: نام اصلی کاربر جدا از نام امن ذخیره‌شده روی دیسک
+  originalName  String
+  storedName    String    // نام امن تولیدشده (uuid.ext)
+  storagePath   String    // مسیر نسبی داخل bucket (هرگز مسیر دلخواه کاربر)
+  bucket        String    @default("documents") // documents | texsa
+  mimeType      String    @default("application/octet-stream")
+  sizeBytes     Int       @default(0)
+  sha256        String    // برای صحت و کشف تکراری
+  // دسترسی: PROJECT (همه اعضای پروژه) | PARTY (فقط طرف آپلودکننده) | INTERNAL
+  visibility    String    @default("PROJECT")
+  partyType     String?   // طرف آپلودکننده (برای visibility=PARTY)
+  uploadedById  String?
+  uploadedByName String?
+  createdAt     DateTime  @default(now())
+  deletedAt     DateTime? // soft-delete
+
+  project       Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([projectId])
+  @@index([ownerType, ownerId])
+  @@index([sha256])
 }
 
 // ─── مرحله ۲: ریزمتره ───
