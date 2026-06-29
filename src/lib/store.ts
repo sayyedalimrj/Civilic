@@ -14,6 +14,7 @@ export type ViewMode =
 // ─── تب‌های پروژه عمرانی ───
 export type ProjectTab =
   | "overview"       // پیشخوان پروژه
+  | "team"           // تیم و طرف‌ها
   | "documents"      // اسناد و مکاتبات
   | "metering"       // متره و صورتجلسات
   | "payment"        // صورت‌وضعیت‌ها

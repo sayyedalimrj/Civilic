@@ -159,6 +159,7 @@ const VIEW_LABELS: Record<ViewMode, string> = {
 
 const TAB_LABELS: Record<ProjectTab, string> = {
   overview: "پیشخوان",
+  team: "تیم و طرف‌ها",
   documents: "اسناد و مکاتبات",
   metering: "متره",
   payment: "صورت‌وضعیت",

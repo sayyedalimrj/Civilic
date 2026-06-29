@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   LayoutDashboard, FileText, ListTree, Receipt, TrendingUp,
-  MessageSquare, Download,
+  MessageSquare, Download, Users,
 } from "lucide-react";
 import { useAppStore, type ProjectTab } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -22,9 +22,11 @@ import { ReportsView } from "./reports-view";
 import { MeasurementReviewView } from "@/components/review/measurement-review-view";
 import { AdjustmentReviewView } from "@/components/review/adjustment-review-view";
 import { TexsaCompatReport } from "@/components/review/texsa-compat-report";
+import { ProjectTeamView } from "./project-team-view";
 
 const TABS: { id: ProjectTab; label: string; icon: typeof FileText }[] = [
   { id: "overview", label: "پیشخوان", icon: LayoutDashboard },
+  { id: "team", label: "تیم و طرف‌ها", icon: Users },
   { id: "documents", label: "اسناد و مکاتبات", icon: FileText },
   { id: "metering", label: "متره", icon: ListTree },
   { id: "payment", label: "صورت‌وضعیت", icon: Receipt },
@@ -46,6 +48,14 @@ export function ProjectDetail() {
   });
 
   const project = data?.project;
+
+  const { data: partiesData } = useQuery<{ parties: { id: string; partyType: string; displayTitle: string; organization: { name: string } | null }[] }>({
+    queryKey: ["project-parties", selectedProjectId],
+    queryFn: async () => (await fetch(`/api/projects/${selectedProjectId}/parties`)).json(),
+    enabled: !!selectedProjectId,
+  });
+  const parties = partiesData?.parties ?? [];
+  const partyByType = (t: string) => parties.find((p) => p.partyType === t);
 
   // Role labels for identity bar
   const PARTY_LABELS: Record<string, string> = {
@@ -81,14 +91,22 @@ export function ProjectDetail() {
             {currentUser.canApprove && <Badge className="text-[8px] h-3.5 bg-emerald-100 text-emerald-800">مجاز به تأیید</Badge>}
           </div>
         </div>
-        {/* Parties */}
-        <div className="mt-2 flex flex-wrap items-center gap-3 text-[10px] text-muted-foreground">
-          <span>کارفرما: <span className="font-medium text-foreground">دانشگاه خاتم</span></span>
-          <span>•</span>
-          <span>مشاور: <span className="font-medium text-foreground">مهندسین مشاور شارستان</span></span>
-          <span>•</span>
-          <span>پیمانکار: <span className="font-medium text-foreground">شرکت سیوان تدبیر تجارت</span></span>
-        </div>
+        {/* Parties (دادهٔ واقعی پروژه) */}
+        {parties.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+            {(["EMPLOYER", "CONSULTANT", "CONTRACTOR"] as const).map((t, i) => {
+              const p = partyByType(t);
+              if (!p) return null;
+              const label = t === "EMPLOYER" ? "کارفرما" : t === "CONSULTANT" ? "مشاور" : "پیمانکار";
+              return (
+                <span key={t} className="flex items-center gap-3">
+                  {i > 0 && <span>•</span>}
+                  <span>{label}: <span className="font-medium text-foreground">{p.organization?.name ?? p.displayTitle}</span></span>
+                </span>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Tab bar */}
@@ -118,6 +136,7 @@ export function ProjectDetail() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
         {selectedProjectTab === "overview" && <OverviewView />}
+        {selectedProjectTab === "team" && <ProjectTeamView />}
         {selectedProjectTab === "documents" && (
           <div className="p-4 text-center text-sm text-muted-foreground">
             <FileText className="size-8 mx-auto mb-2 text-muted-foreground/40" />

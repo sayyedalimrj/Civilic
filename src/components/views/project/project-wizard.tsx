@@ -11,6 +11,7 @@ import {
   FileText,
   Sliders,
   CheckCircle2,
+  Building2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -33,9 +34,12 @@ import { combinedCoefficient, type Coefficients } from "@/lib/calc/cascade";
 const STEPS = [
   { id: 0, title: "مشخصات پروژه", icon: FolderPlus },
   { id: 1, title: "پیمان", icon: FileText },
-  { id: 2, title: "ضرایب", icon: Sliders },
-  { id: 3, title: "تأیید", icon: CheckCircle2 },
+  { id: 2, title: "طرف‌های پروژه", icon: Building2 },
+  { id: 3, title: "ضرایب", icon: Sliders },
+  { id: 4, title: "تأیید", icon: CheckCircle2 },
 ];
+
+type PartyDraft = { partyType: string; organizationId: string; organizationName: string };
 
 export function ProjectWizard({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const { selectProject } = useAppStore();
@@ -70,6 +74,27 @@ export function ProjectWizard({ open, onOpenChange }: { open: boolean; onOpenCha
     },
   });
 
+  const [parties, setParties] = useState<PartyDraft[]>([
+    { partyType: "EMPLOYER", organizationId: "", organizationName: "" },
+    { partyType: "CONSULTANT", organizationId: "", organizationName: "" },
+    { partyType: "CONTRACTOR", organizationId: "", organizationName: "" },
+  ]);
+
+  const { data: orgsData } = useQuery<{ organizations: { id: string; name: string }[] }>({
+    queryKey: ["organizations"],
+    queryFn: async () => {
+      const r = await fetch("/api/organizations");
+      return r.ok ? r.json() : { organizations: [] };
+    },
+  });
+  const orgs = orgsData?.organizations ?? [];
+
+  const setParty = (idx: number, patch: Partial<PartyDraft>) =>
+    setParties((prev) => prev.map((p, i) => (i === idx ? { ...p, ...patch } : p)));
+
+  // فقط طرف‌هایی که سازمان موجود یا نام جدید دارند ارسال می‌شوند
+  const validParties = parties.filter((p) => p.organizationId || p.organizationName.trim());
+
   const mutation = useMutation({
     mutationFn: async (body: any) => {
       const r = await fetch("/api/projects", {
@@ -93,6 +118,11 @@ export function ProjectWizard({ open, onOpenChange }: { open: boolean; onOpenCha
         contractDate: "", location: "", description: "", priceListId: "",
         coefficients: { general: 1.0, regional: 1.12, altitude: 1.0, floors: 1.0, tunnelHardship: 1.0 },
       });
+      setParties([
+        { partyType: "EMPLOYER", organizationId: "", organizationName: "" },
+        { partyType: "CONSULTANT", organizationId: "", organizationName: "" },
+        { partyType: "CONTRACTOR", organizationId: "", organizationName: "" },
+      ]);
     },
     onError: () => {
       toast({ title: "خطا", description: "ایجاد پروژه ناموفق بود", variant: "destructive" });
@@ -118,6 +148,11 @@ export function ProjectWizard({ open, onOpenChange }: { open: boolean; onOpenCha
       description: form.description,
       priceListId: form.priceListId || null,
       coefficients: form.coefficients,
+      parties: validParties.map((p) => ({
+        partyType: p.partyType,
+        organizationId: p.organizationId || undefined,
+        organizationName: p.organizationId ? undefined : p.organizationName.trim(),
+      })),
     });
   };
 
@@ -257,8 +292,53 @@ export function ProjectWizard({ open, onOpenChange }: { open: boolean; onOpenCha
               </div>
             )}
 
-            {/* مرحله ۲: ضرایب */}
+            {/* مرحله ۲: طرف‌های پروژه */}
             {step === 2 && (
+              <div className="space-y-4">
+                <h3 className="font-semibold">طرف‌های پروژه</h3>
+                <p className="text-sm text-muted-foreground">
+                  کارفرما، مشاور و پیمانکار را مشخص کنید. می‌توانید سازمان موجود را انتخاب یا نام سازمان جدید را وارد کنید. این مرحله اختیاری است و بعداً از تب «تیم و طرف‌ها» قابل تکمیل است.
+                </p>
+                <div className="space-y-3">
+                  {parties.map((p, idx) => {
+                    const label = p.partyType === "EMPLOYER" ? "کارفرما" : p.partyType === "CONSULTANT" ? "مشاور / دستگاه نظارت" : "پیمانکار";
+                    return (
+                      <div key={p.partyType} className="rounded-lg border p-3">
+                        <div className="mb-2 text-sm font-medium">{label}</div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">سازمان موجود</Label>
+                            <Select
+                              value={p.organizationId}
+                              onValueChange={(v) => setParty(idx, { organizationId: v, organizationName: "" })}
+                            >
+                              <SelectTrigger><SelectValue placeholder="انتخاب سازمان" /></SelectTrigger>
+                              <SelectContent>
+                                {orgs.map((o) => (
+                                  <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">یا نام سازمان جدید</Label>
+                            <Input
+                              value={p.organizationName}
+                              disabled={!!p.organizationId}
+                              onChange={(e) => setParty(idx, { organizationName: e.target.value })}
+                              placeholder="مثلاً: شرکت …"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* مرحله ۳: ضرایب */}
+            {step === 3 && (
               <div className="space-y-4">
                 <h3 className="font-semibold">ضرایب پروژه</h3>
                 <p className="text-sm text-muted-foreground">
@@ -278,8 +358,8 @@ export function ProjectWizard({ open, onOpenChange }: { open: boolean; onOpenCha
               </div>
             )}
 
-            {/* مرحله ۳: تأیید */}
-            {step === 3 && (
+            {/* مرحله ۴: تأیید */}
+            {step === 4 && (
               <div className="space-y-4">
                 <h3 className="font-semibold">تأیید و ایجاد پروژه</h3>
                 <div className="rounded-lg border p-4">
@@ -306,7 +386,7 @@ export function ProjectWizard({ open, onOpenChange }: { open: boolean; onOpenCha
             <ArrowRight className="ml-1.5 size-4" />
             {step === 0 ? "انصراف" : "مرحله قبل"}
           </Button>
-          {step < 3 ? (
+          {step < 4 ? (
             <Button onClick={() => setStep(step + 1)} disabled={!canNext()}>
               مرحله بعد
               <ArrowLeft className="mr-1.5 size-4" />
