@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getPlatformAccess } from "@/lib/auth/permissions";
+import { writeAudit, clientIp } from "@/lib/audit";
 
 // کانال‌های پیش‌فرض هر پروژه
 const DEFAULT_CHANNELS: { title: string; type: string; visibility: string }[] = [
@@ -76,7 +77,7 @@ export async function GET(req: NextRequest) {
 }
 
 const partySchema = z.object({
-  partyType: z.enum(["EMPLOYER", "CONSULTANT", "CONTRACTOR", "OTHER"]),
+  partyType: z.enum(["EMPLOYER", "CONSULTANT", "CONTRACTOR", "LAB", "SUPPLIER", "OPERATOR", "OTHER"]),
   organizationId: z.string().optional(),
   organizationName: z.string().optional(),
   displayTitle: z.string().optional(),
@@ -135,6 +136,8 @@ export async function POST(req: NextRequest) {
   });
 
   // طرفین (انتخاب سازمان موجود یا ساخت سازمان جدید)
+  let employerPartyId: string | null = null;
+  let firstPartyId: string | null = null;
   for (const p of d.parties ?? []) {
     let orgId = p.organizationId;
     if (!orgId && p.organizationName) {
@@ -144,7 +147,7 @@ export async function POST(req: NextRequest) {
       orgId = org.id;
     }
     if (!orgId) continue;
-    await db.projectParty.create({
+    const party = await db.projectParty.create({
       data: {
         projectId: project.id,
         organizationId: orgId,
@@ -153,11 +156,35 @@ export async function POST(req: NextRequest) {
         isPrimary: true,
       },
     });
+    if (!firstPartyId) firstPartyId = party.id;
+    if (p.partyType === "EMPLOYER" && !employerPartyId) employerPartyId = party.id;
   }
 
   // کانال‌های پیش‌فرض
   await db.projectChannel.createMany({
     data: DEFAULT_CHANNELS.map((c) => ({ projectId: project.id, ...c })),
+  });
+
+  // سازنده را به‌عنوان عضو پروژه اضافه کن (به طرف کارفرما یا اولین طرف) تا فوراً دسترسی داشته باشد
+  const ownerPartyId = employerPartyId ?? firstPartyId;
+  if (ownerPartyId) {
+    await db.projectMember.create({
+      data: {
+        projectId: project.id,
+        userId: user.id,
+        projectPartyId: ownerPartyId,
+        role: "employer_project_manager",
+        canSign: true,
+        canApprove: true,
+        isActive: true,
+      },
+    });
+  }
+
+  await writeAudit({
+    tenantId, projectId: project.id, userId: user.id, userName: user.name,
+    action: "CREATE", entityType: "PROJECT", entityId: project.id,
+    after: { name: project.name, code: project.code }, ipAddr: clientIp(req.headers),
   });
 
   return NextResponse.json({ project }, { status: 201 });
