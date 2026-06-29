@@ -6,6 +6,8 @@ import { RedlineReviewPanel, type RedlineItem } from "@/components/review/redlin
 import type { PaymentReviewSummaryData } from "@/components/review/payment-review-summary";
 import type { SequenceStage } from "@/components/review/calculation-sequence-rail";
 import type { ReviewParty } from "@/lib/review/layers";
+import { AttachmentsPanel } from "@/components/uploads/attachments-panel";
+import { useProjectAccess } from "@/hooks/use-project-access";
 
 interface AdjData {
   myParty: ReviewParty | null;
@@ -17,6 +19,7 @@ interface AdjData {
 
 export function AdjustmentReviewView({ projectId, type = "TEMPORARY" }: { projectId: string; type?: string }) {
   const qc = useQueryClient();
+  const { can } = useProjectAccess(projectId);
   const key = ["adjustment-review", projectId, type];
   const { data, isLoading } = useQuery<AdjData>({
     queryKey: key,
@@ -44,16 +47,27 @@ export function AdjustmentReviewView({ projectId, type = "TEMPORARY" }: { projec
   const canReview = data?.myParty === "CONSULTANT" || data?.myParty === "EMPLOYER";
 
   return (
-    <RedlineReviewPanel
-      title="رسیدگی تعدیل"
-      subtitle="تعدیل ادعایی پیمانکار، رسیدگی مشاور (قرمز) و تایید نهایی کارفرما (سبز)"
-      summary={data?.summary ?? null}
-      sequence={data?.sequence ?? []}
-      items={data?.items ?? []}
-      canReview={canReview}
-      busy={reviewMut.isPending || bulkMut.isPending}
-      onReview={(itemId, decision, value, comment) => reviewMut.mutate({ itemId, decision, amount: value, comment })}
-      onBulkApprove={() => bulkMut.mutate()}
-    />
+    <div className="space-y-4">
+      <RedlineReviewPanel
+        title="رسیدگی تعدیل"
+        subtitle="تعدیل ادعایی پیمانکار، رسیدگی مشاور (قرمز) و تایید نهایی کارفرما (سبز)"
+        summary={data?.summary ?? null}
+        sequence={data?.sequence ?? []}
+        items={data?.items ?? []}
+        canReview={canReview}
+        busy={reviewMut.isPending || bulkMut.isPending}
+        onReview={(itemId, decision, value, comment) => reviewMut.mutate({ itemId, decision, amount: value, comment })}
+        onBulkApprove={() => bulkMut.mutate()}
+      />
+      <div className="rounded-lg border bg-card p-4">
+        <AttachmentsPanel
+          projectId={projectId}
+          ownerType="ADJUSTMENT"
+          ownerId={`${projectId}:${type}`}
+          canUpload={can("document.create")}
+          title="پیوست‌های تعدیل"
+        />
+      </div>
+    </div>
   );
 }

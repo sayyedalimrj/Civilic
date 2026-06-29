@@ -24,6 +24,8 @@ import {
 } from "recharts";
 
 import { useAppStore } from "@/lib/store";
+import { AttachmentsPanel } from "@/components/uploads/attachments-panel";
+import { useProjectAccess } from "@/hooks/use-project-access";
 import { faNum, faMoney, faRial, toFa } from "@/lib/fa";
 import { descendingPriceAdjustment } from "@/lib/calc/cascade";
 import { useToast } from "@/hooks/use-toast";
@@ -487,6 +489,7 @@ export function FinancialSheetView() {
   const projectId = useAppStore((s) => s.selectedProjectId);
   const { toast } = useToast();
   const qc = useQueryClient();
+  const { can } = useProjectAccess(projectId);
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery<ProjectResponse>({
     queryKey: ["project", projectId],
@@ -627,6 +630,17 @@ export function FinancialSheetView() {
             بازخوانی
           </Button>
         </div>
+      </div>
+
+      {/* اسناد و مدارک برگه مالی */}
+      <div className="rounded-lg border bg-card p-4">
+        <AttachmentsPanel
+          projectId={projectId}
+          ownerType="DOCUMENT"
+          ownerId={projectId}
+          canUpload={can("document.create")}
+          title="اسناد و مدارک پروژه"
+        />
       </div>
 
       {/* Table */}

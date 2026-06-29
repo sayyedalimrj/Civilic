@@ -5,6 +5,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { RedlineReviewPanel, type RedlineItem } from "@/components/review/redline-review-panel";
 import type { SequenceStage } from "@/components/review/calculation-sequence-rail";
 import type { ReviewParty } from "@/lib/review/layers";
+import { AttachmentsPanel } from "@/components/uploads/attachments-panel";
+import { useProjectAccess } from "@/hooks/use-project-access";
 
 interface MData {
   myParty: ReviewParty | null;
@@ -15,6 +17,7 @@ interface MData {
 
 export function MeasurementReviewView({ projectId }: { projectId: string }) {
   const qc = useQueryClient();
+  const { can } = useProjectAccess(projectId);
   const key = ["measurement-review", projectId];
   const { data, isLoading } = useQuery<MData>({
     queryKey: key,
@@ -36,17 +39,28 @@ export function MeasurementReviewView({ projectId }: { projectId: string }) {
   const canReview = data?.myParty === "CONSULTANT" || data?.myParty === "EMPLOYER";
 
   return (
-    <RedlineReviewPanel
-      title="رسیدگی ریزمتره"
-      subtitle="مقدار واردشده‌ی پیمانکار، رسیدگی مشاور (قرمز) و مقدار نهایی کارفرما (سبز)"
-      summary={null}
-      sequence={data?.sequence ?? []}
-      items={data?.items ?? []}
-      showQuantity
-      canReview={canReview}
-      busy={reviewMut.isPending}
-      onReview={(itemId, decision, value, comment) => reviewMut.mutate({ itemId, decision, quantity: value, comment })}
-      onBulkApprove={() => { /* اقدام گروهی متره در نسخه‌ی بعد */ }}
-    />
+    <div className="space-y-4">
+      <RedlineReviewPanel
+        title="رسیدگی ریزمتره"
+        subtitle="مقدار واردشده‌ی پیمانکار، رسیدگی مشاور (قرمز) و مقدار نهایی کارفرما (سبز)"
+        summary={null}
+        sequence={data?.sequence ?? []}
+        items={data?.items ?? []}
+        showQuantity
+        canReview={canReview}
+        busy={reviewMut.isPending}
+        onReview={(itemId, decision, value, comment) => reviewMut.mutate({ itemId, decision, quantity: value, comment })}
+        onBulkApprove={() => { /* اقدام گروهی متره در نسخه‌ی بعد */ }}
+      />
+      <div className="rounded-lg border bg-card p-4">
+        <AttachmentsPanel
+          projectId={projectId}
+          ownerType="MEASUREMENT"
+          ownerId={projectId}
+          canUpload={can("measurement.edit") || can("document.create")}
+          title="پیوست‌های متره و صورتجلسه"
+        />
+      </div>
+    </div>
   );
 }
