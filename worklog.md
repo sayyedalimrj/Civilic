@@ -1525,3 +1525,36 @@ Agent: Kiro (Claude Opus 4.8). مبنا: روی شاخه‌ی PR #4 (آپلود/
 - اتصال پیوست به مکاتبات/صورتجلسه/چت باقی است (همان `AttachmentsPanel`).
 - انتشار کامل stale و توسعه‌ی seed برای نمونه‌های redline/stale/attachment/round-trip در فاز بعد.
 - مهاجرت DB (`prisma db push`/`migrate deploy`) روی Postgres مقصد لازم است (در sandbox فقط `prisma generate`).
+
+
+
+---
+
+## Product UI Phase 1 — Project Team & Parties + Wizard Parties Step
+Agent: Kiro (Claude Opus 4.8). مبنا: `main` (پس از merge شدن PR #4 و #5). راستی‌آزمایی: `prisma generate` ✅، `tsc --noEmit` ۰ خطا، `eslint .` بدون خطا، `next build` موفق.
+
+### هدف
+اولین برش UIِ محصول‌محور روی APIهای merge‌شده‌ی PR #5 — مدیریت تیم/طرف‌های پروژه و افزودن مرحله‌ی طرف‌ها به ویزارد ساخت پروژه. قابل استفاده‌ی واقعی از مرورگر.
+
+### چه چیزی افزوده/تغییر کرد
+- **`GET /api/meta/roles`** — گزینه‌های نقش پروژه (key/label/partyType، نقش‌های سیستمی فیلتر شده) و برچسب طرف‌ها (شامل LAB/SUPPLIER/OPERATOR/OTHER). چون `permissions.ts` سمت‌سرور است (import می‌کند `db`)، ثابت‌ها از این endpoint به کلاینت داده می‌شوند.
+- **`ProjectTeamView`** (`src/components/views/project/project-team-view.tsx`) — تب جدید «تیم و طرف‌ها»:
+  - شبکه‌ی طرف‌های پروژه (`GET /api/projects/[id]/parties`) با رنگ طرف (کارفرما سبز/مشاور قرمز/پیمانکار آبی).
+  - افزودن طرف (`POST …/parties`): انتخاب سازمان موجود (`GET /api/organizations`) یا ساخت سازمان جدید.
+  - جدول اعضا (`GET …/members`) با نقش، طرف، نشان امضا/تأیید، وضعیت فعال.
+  - افزودن عضو (`POST …/members`): انتخاب کاربر (`GET /api/users`)، طرف، و نقش پروژه‌ای (نقش‌ها بر اساس نوع طرف فیلتر می‌شوند).
+  - ویرایش عضو (`PATCH …/members/[memberId]`): نقش/امضا/تأیید/فعال‌بودن. حذف عضو (`DELETE`) — فقط با مجوز `members.disable`.
+  - همه‌ی دکمه‌ها با `useProjectAccess` gate می‌شوند؛ امنیت واقعی سمت‌سرور است.
+- **ناوبری**: `ProjectTab` جدید `"team"` در `store.ts`؛ تب در `project-detail.tsx` (آیکن Users) + render؛ کلید `team` در `Record<ProjectTab,string>` هدر.
+- **حذف hard-code**: نوار طرف‌ها در هدر پروژه دیگر «خاتم/شارستان/سیوان» ثابت نیست؛ از `GET /api/projects/[id]/parties` خوانده می‌شود.
+- **ویزارد ساخت پروژه** (`project-wizard.tsx`): مرحله‌ی جدید «طرف‌های پروژه» (کارفرما/مشاور/پیمانکار با سازمان موجود یا نام جدید). آرایه‌ی `parties[]` به `POST /api/projects` ارسال می‌شود (که خودش سازنده را به‌عنوان عضو اضافه می‌کند). مراحل به ۵ مرحله افزایش یافت.
+
+### نحوه‌ی تست (از مرورگر)
+1. ساخت پروژه → مرحله‌ی «طرف‌های پروژه» → انتخاب/ساخت سازمان برای هر طرف → ایجاد.
+2. ورود به پروژه → تب «تیم و طرف‌ها» → افزودن طرف، افزودن عضو با نقش، ویرایش/حذف عضو.
+3. نوار طرف‌ها در هدر پروژه باید سازمان‌های واقعی همان پروژه را نشان دهد (نه نام‌های دمو).
+
+### محدودیت‌ها / فاز بعد (شفاف)
+- این برش روی تیم/طرف‌ها متمرکز بود. بخش‌های UIِ باقی‌مانده‌ی فاز بعد: ویزارد UI ایمپورت تکسا، بازطراحی کامل workspace (rail توالی + side panel)، بازسازی UX صورت‌وضعیت/تعدیل/متره، پنل‌های پیوست روی همه‌ی سطوح سند، و UI وضعیت stale/وابستگی.
+- `GET /api/users` هنوز tenant را hard-code می‌کند (`tenant-demo`) — بهبود در فاز بعد.
+- نیازمند `prisma db push`/`migrate deploy` روی Postgres مقصد.
