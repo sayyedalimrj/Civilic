@@ -1421,3 +1421,55 @@ Agent: Kiro (Claude Opus 4.8). راستی‌آزمایی: `db:generate` ✅، `t
 - Drawer تاریخچه‌ی ردیفی (LineItemChangeLog ثبت می‌شود؛ نمایش drawer اختصاصی باقی است).
 - parity کامل فرمول ریالی با تکسا هنوز کامل نیست؛ مقادیر import‌شده source of truth و با `NEEDS_TEXSA_PARITY_REVIEW` علامت‌گذاری می‌شوند.
 - نوار طرفین در هدر پروژه هنوز نام‌های دموی خاتم را hard-code دارد (نیازمند اتصال به `ProjectParty`).
+
+
+
+---
+
+## Secure Core Workflow UX Rebuild Phase
+Agent: Kiro (Claude Opus 4.8). راستی‌آزمایی: `prisma generate` ✅، `tsc --noEmit` ۰ خطا، `eslint .` بدون خطا، `next build` موفق (routeهای آپلود ثبت شدند)، تست امنیتی runtime ۹/۹ موفق.
+
+### چرا این فاز
+طبق اولویت‌بندی این فاز (آیتم #۲: «Upload/Security Foundation»)، زیرساخت **آپلود واقعی و امن فایل** پیش‌نیاز پیوست‌های صورت‌وضعیت/تعدیل/متره/مکاتبات و ایمپورت تکسا است و قبلاً وجود نداشت. سیستم قبلی (`/api/documents`) فقط متادیتا ذخیره می‌کرد و فایل‌ها را به‌صورت **عمومی** زیر `public/uploads` می‌نوشت — بدون بررسی دسترسی، بدون sha256، بدون مهار مسیر، با `tenant-demo` ثابت. این فاز یک مسیر امن و واقعی جایگزین ساخت (سیستم قبلی دست‌نخورده باقی ماند تا چیزی نشکند).
+
+### مدل داده (افزایشی، بدون شکستن schema موجود)
+- **`Attachment`** اضافه شد: `id, tenantId, projectId?, ownerType, ownerId, originalName, storedName, storagePath, bucket, mimeType, sizeBytes, sha256, visibility, partyType?, uploadedById?, uploadedByName?, createdAt, deletedAt` + back-relation روی `Project`. ایندکس روی `tenantId`/`projectId`/`(ownerType,ownerId)`/`sha256`.
+- نام اصلی کاربر (`originalName`) از نام امن ذخیره‌شده روی دیسک (`storedName = uuid.ext`) جدا نگه‌داری می‌شود.
+
+### امنیت آپلود (`src/lib/auth/upload-security.ts` + `src/lib/storage/upload-config.ts`)
+- ذخیره فقط زیر دایرکتوری‌های پیکربندی‌شده از env: `CIVILIC_UPLOAD_DIR` / `DOCUMENT_UPLOAD_DIR` / `TEXSA_UPLOAD_DIR` (fallback به `<project>/.uploads` برای dev). `MAX_UPLOAD_MB` پیش‌فرض ۵۰۰.
+- `resolveSecurePath` فقط `basename` را می‌پذیرد و خروج از ریشه را مسدود می‌کند → **path traversal غیرممکن**.
+- نام امن `uuid.ext`؛ اعتبارسنجی پسوند بر اساس bucket (اسناد: pdf/office/تصویر/zip/dwg…؛ تکسا: فقط `.svzt`)؛ فهرست پسوندهای خطرناک ممنوع (`.exe/.sh/.js/.html/.svg/…`).
+- `sha256` و حجم در زمان ذخیره محاسبه می‌شوند؛ نوشتن با مجوز `0o640` (فایل آپلودی هرگز اجرایی نیست).
+- دانلود به‌صورت **استریم** از دیسک (بدون لود کل فایل در حافظه) با `Content-Disposition: attachment` + `X-Content-Type-Options: nosniff` + `Cache-Control: private, no-store`.
+
+### APIها (همگی Node runtime + احراز هویت + مجوز سمت‌سرور + مرز tenant + visibility + audit)
+- `POST /api/uploads` (multipart: file, projectId, ownerType, ownerId, visibility?) — مجوز بر اساس ownerType (`document.create` / `texsa.import` / `correspondence.send` / `chat.send`).
+- `GET /api/uploads?projectId&ownerType&ownerId` — فهرست با فیلتر visibility در سطح ردیف.
+- `GET /api/uploads/[id]/download` — دانلود محافظت‌شده (عضویت پروژه + مجوز view + visibility + مرز tenant).
+- `DELETE /api/uploads/[id]` — حذف نرم (soft-delete) فقط برای آپلودکننده یا دارای `project.edit`.
+- هر اقدام (`UPLOAD/DOWNLOAD/DELETE`) یک `AuditLog` با who/tenant/project/IP می‌نویسد (`src/lib/audit.ts`).
+- مدل visibility: `PROJECT` (همه‌ی اعضا) | `PARTY` (فقط همان نوع طرف یا آپلودکننده) | `INTERNAL` — در `src/lib/storage/attachment-service.ts`.
+
+### permission-aware UI
+- `GET /api/projects/[id]/access` + هوک `useProjectAccess` (`src/hooks/use-project-access.ts`) مجوزهای کاربر فعلی را برای gating کلاینت برمی‌گردانند (منبع حقیقت همچنان سرور است).
+
+### کامپوننت‌های قابل‌استفاده‌ی مجدد
+- `PermissionGate` (`src/components/auth/permission-gate.tsx`).
+- `SecureFileUpload` (drag&drop + نوار پیشرفت XHR + اعتبارسنجی حجم کلاینت).
+- `AttachmentList` (نمایش حجم فارسی، آپلودکننده، تاریخ شمسی، نشان visibility، دانلود/حذف).
+- `AttachmentsPanel` (فهرست + آپلود + حذف از طریق react-query) — قابل اتصال به صورت‌وضعیت/تعدیل/متره/مکاتبات/اسناد.
+
+### اتصال به محصول
+- در جزئیات صورت‌وضعیت (`payments-view`) حالت سومی «پیوست‌ها» در کنار «ثبت اجرا» و «رسیدگی ردیفی» اضافه شد؛ آپلود فقط با مجوز `document.create` فعال است.
+- برند فوتر از «متره‌یار» به **«Civilic»** اصلاح شد.
+
+### تست
+- تست runtime منطق امنیت (`storeUpload`/`resolveSecurePath`): ۹/۹ موفق — تطابق sha256، نوشتن صحیح بایت‌ها، رد `.exe`، رد `.svzt` در bucket اسناد و پذیرش آن در bucket تکسا، مهار traversal داخل bucket، رد فایل خالی.
+- روش تست دستی: ورود → پروژه → صورت‌وضعیت → جزئیات → تب «پیوست‌ها» → آپلود؛ دانلود از `/api/uploads/[id]/download` فقط برای کاربر مجاز.
+
+### کار باقی‌مانده / محدودیت‌ها (شفاف)
+- این فاز فقط **زیرساخت آپلود/امنیت (اولویت #۲)** را کامل کرد. سایر بخش‌های درخواست (ویزارد ساخت پروژه با طرف‌ها/کاربران، بازطراحی workspace پروژه، ویزارد ایمپورت تکسا UI، بازسازی کامل UX صورت‌وضعیت/تعدیل/متره) در فازهای بعدی ادامه می‌یابند.
+- `AttachmentsPanel` فعلاً فقط به جزئیات صورت‌وضعیت متصل شده؛ اتصال به تعدیل/متره/مکاتبات/اسناد با همان کامپوننت بدون تغییر backend ممکن است.
+- ایمپورت تکسا هنوز از bucket `texsa` و `ownerType=TEXSA_IMPORT` استفاده نمی‌کند (آماده است؛ اتصال در فاز ویزارد تکسا).
+- مهاجرت دیتابیس (`prisma migrate`) نیازمند یک Postgres واقعی است؛ در sandbox فقط `prisma generate` اجرا شد. روی محیط مقصد `prisma db push`/`migrate deploy` لازم است تا جدول `Attachment` ساخته شود.

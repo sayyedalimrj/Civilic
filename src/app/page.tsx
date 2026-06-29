@@ -37,7 +37,7 @@ export default function Home() {
       </div>
       <footer className="sticky bottom-0 z-30 mt-auto border-t bg-card px-4 py-2.5">
         <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-          <span className="font-bold text-foreground">متره‌یار</span>
+          <span className="font-bold text-foreground">Civilic</span>
           <span className="flex items-center gap-1.5">
             <span className="size-1.5 rounded-full bg-emerald-500" />
             اتصال برقرار
